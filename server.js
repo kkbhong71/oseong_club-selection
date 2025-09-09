@@ -25,41 +25,7 @@ console.log(`🌍 환경: ${SYSTEM_INFO.environment}`);
 
 // 보안 미들웨어 (CSP 수정)
 app.use(helmet({
-    contentSecurityPolicy: process.env.NODE_ENV === 'production' ? {
-        directives: {
-            defaultSrc: ["'self'"],
-            scriptSrc: [
-                "'self'", 
-                "'unsafe-inline'", 
-                "'unsafe-eval'",
-                "https://unpkg.com",
-                "https://cdn.jsdelivr.net",
-                "https://cdnjs.cloudflare.com",
-                "https://cdn.tailwindcss.com"
-            ],
-            styleSrc: [
-                "'self'", 
-                "'unsafe-inline'",
-                "https://fonts.googleapis.com",
-                "https://cdnjs.cloudflare.com",
-                "https://cdn.tailwindcss.com"
-            ],
-            fontSrc: [
-                "'self'",
-                "data:",
-                "https://fonts.gstatic.com",
-                "https://cdnjs.cloudflare.com"
-            ],
-            imgSrc: ["'self'", "data:", "https:"],
-            connectSrc: [
-                "'self'",
-                "https://fonts.googleapis.com",
-                "https://fonts.gstatic.com", 
-                "https://cdn.jsdelivr.net",
-                "https://cdnjs.cloudflare.com"
-            ]
-        }
-    } : false,
+    contentSecurityPolicy: false,
     crossOriginEmbedderPolicy: false
 }));
 
