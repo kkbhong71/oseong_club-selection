@@ -23,7 +23,7 @@ console.log(`🚀 ${SYSTEM_INFO.name} v${SYSTEM_INFO.version} 시작`);
 console.log(`📅 시작 시간: ${SYSTEM_INFO.startTime.toISOString()}`);
 console.log(`🌍 환경: ${SYSTEM_INFO.environment}`);
 
-// 보안 미들웨어
+// 보안 미들웨어 (CSP 수정)
 app.use(helmet({
     contentSecurityPolicy: process.env.NODE_ENV === 'production' ? {
         directives: {
@@ -46,11 +46,18 @@ app.use(helmet({
             ],
             fontSrc: [
                 "'self'",
+                "data:",
                 "https://fonts.gstatic.com",
                 "https://cdnjs.cloudflare.com"
             ],
             imgSrc: ["'self'", "data:", "https:"],
-            connectSrc: ["'self'"]
+            connectSrc: [
+                "'self'",
+                "https://fonts.googleapis.com",
+                "https://fonts.gstatic.com", 
+                "https://cdn.jsdelivr.net",
+                "https://cdnjs.cloudflare.com"
+            ]
         }
     } : false,
     crossOriginEmbedderPolicy: false
