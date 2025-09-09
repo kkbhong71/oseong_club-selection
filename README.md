@@ -1,6 +1,6 @@
 # 🏫 오성중학교 동아리 편성 시스템
 
-**2025학년도 창체동아리 신청 및 편성을 위한 웹 기반 관리 시스템**
+**창체동아리 신청 및 편성을 위한 웹 기반 관리 시스템**
 
 [![Node.js](https://img.shields.io/badge/Node.js-18.x-green)](https://nodejs.org/)
 [![React](https://img.shields.io/badge/React-18.x-blue)](https://reactjs.org/)
@@ -312,6 +312,6 @@ psql -d osung_club_db -c "SELECT COUNT(*) FROM users;"
 **🎓 오성중학교 동아리 편성 시스템**  
 *학생들의 꿈과 재능을 키우는 디지털 플랫폼*
 
-**개발**: Claude AI Assistant  
+**개발**: Claude AI Assistant wtih KGB Technology 
 **목적**: 교육 혁신 및 디지털 전환 지원  
 **버전**: 1.0.0 (2025.09.09)
