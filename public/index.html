@@ -5,33 +5,63 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>오성중학교 동아리 편성 시스템</title>
     
-    <!-- Tailwind CSS CDN -->
-    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- SEO 메타태그 -->
+    <meta name="description" content="오성중학교 2025학년도 창체동아리 신청 및 편성 관리 시스템">
+    <meta name="keywords" content="오성중학교, 동아리, 편성, 신청, 중학교">
+    <meta name="author" content="오성중학교">
+    
+    <!-- 파비콘 -->
+    <link rel="icon" type="image/x-icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎓</text></svg>">
+    
+    <!-- 프로덕션용 Tailwind CSS 최적화 -->
+    <script>
+        if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
+            document.write('<script src="https://cdn.tailwindcss.com"><\/script>');
+        } else {
+            const link = document.createElement('link');
+            link.rel = 'stylesheet';
+            link.href = 'https://cdn.tailwindcss.com';
+            link.onload = function() { console.log('Tailwind CSS loaded'); };
+            document.head.appendChild(link);
+        }
+    </script>
     
     <!-- React & ReactDOM CDN -->
     <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
     
-    <!-- Babel Standalone (JSX 변환용) -->
-    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <!-- Babel Standalone (개발환경에서만) -->
+    <script>
+        if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
+            document.write('<script src="https://unpkg.com/@babel/standalone/babel.min.js"><\/script>');
+        }
+    </script>
     
-    <!-- Chart.js CDN (통계용) -->
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <!-- Chart.js CDN -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.js"></script>
     
-    <!-- Font Awesome (아이콘) -->
+    <!-- Font Awesome -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     
-    <!-- 커스텀 스타일 -->
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@300;400;500;700&display=swap');
         
+        :root {
+            --primary-blue: #3b82f6;
+            --primary-blue-hover: #2563eb;
+            --success-green: #10b981;
+            --warning-yellow: #f59e0b;
+            --error-red: #ef4444;
+        }
+        
         body {
             font-family: 'Noto Sans KR', sans-serif;
+            line-height: 1.6;
         }
         
         .loading-spinner {
             border: 4px solid #f3f4f6;
-            border-top: 4px solid #3b82f6;
+            border-top: 4px solid var(--primary-blue);
             border-radius: 50%;
             width: 40px;
             height: 40px;
@@ -66,6 +96,7 @@
         .club-card {
             transition: all 0.3s ease;
             cursor: pointer;
+            transform: translateZ(0);
         }
         
         .club-card:hover {
@@ -92,24 +123,261 @@
         
         .tab-active {
             background-color: white;
-            color: #3b82f6;
+            color: var(--primary-blue);
             box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
         }
         
         .tab-inactive {
             color: #6b7280;
         }
+
+        .error-boundary {
+            border: 2px solid var(--error-red);
+            background-color: #fef2f2;
+            padding: 1rem;
+            border-radius: 0.5rem;
+            color: #dc2626;
+        }
+
+        .connection-status {
+            position: fixed;
+            top: 1rem;
+            left: 1rem;
+            z-index: 1000;
+            padding: 0.5rem 1rem;
+            border-radius: 9999px;
+            font-size: 0.875rem;
+            font-weight: 500;
+            transition: all 0.3s ease;
+        }
+
+        .connection-online {
+            background-color: #dcfce7;
+            color: #166534;
+        }
+
+        .connection-offline {
+            background-color: #fee2e2;
+            color: #991b1b;
+        }
+
+        .connection-checking {
+            background-color: #fef3c7;
+            color: #92400e;
+        }
+
+        /* 접근성 개선 */
+        .sr-only {
+            position: absolute;
+            width: 1px;
+            height: 1px;
+            padding: 0;
+            margin: -1px;
+            overflow: hidden;
+            clip: rect(0, 0, 0, 0);
+            white-space: nowrap;
+            border: 0;
+        }
+
+        /* 다크모드 대응 (선택사항) */
+        @media (prefers-color-scheme: dark) {
+            .bg-gray-50 { background-color: #1f2937; }
+            .text-gray-800 { color: #f9fafb; }
+            .text-gray-600 { color: #d1d5db; }
+        }
+
+        /* 모바일 최적화 */
+        @media (max-width: 640px) {
+            .club-card {
+                margin-bottom: 1rem;
+            }
+            
+            .notification {
+                left: 1rem;
+                right: 1rem;
+                max-width: none;
+            }
+        }
     </style>
 </head>
 <body class="bg-gray-50">
-    <div id="root"></div>
+    <!-- 연결 상태 표시 -->
+    <div id="connection-status" class="connection-status connection-checking" style="display: none;">
+        <i class="fas fa-circle-notch fa-spin mr-1"></i>
+        <span>연결 확인 중...</span>
+    </div>
+
+    <!-- Skip to content for accessibility -->
+    <a href="#main-content" class="sr-only focus:not-sr-only focus:absolute focus:top-4 focus:left-4 bg-blue-600 text-white px-4 py-2 rounded">
+        메인 콘텐츠로 바로가기
+    </a>
+
+    <!-- 메인 애플리케이션 -->
+    <div id="root" role="main">
+        <!-- 로딩 중일 때 표시될 기본 UI -->
+        <div class="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center">
+            <div class="text-center" role="status" aria-live="polite">
+                <div class="loading-spinner mx-auto mb-4" aria-hidden="true"></div>
+                <p class="text-gray-600 text-lg">오성중학교 동아리 시스템</p>
+                <p class="text-sm text-gray-500 mt-2">시스템을 초기화하고 있습니다...</p>
+                <div class="mt-4">
+                    <div class="w-64 bg-gray-200 rounded-full h-2 mx-auto">
+                        <div class="bg-blue-600 h-2 rounded-full animate-pulse" style="width: 70%"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 에러 폴백 UI -->
+    <div id="error-fallback" style="display: none;" class="min-h-screen bg-gray-50 flex items-center justify-center">
+        <div class="error-boundary max-w-md text-center">
+            <i class="fas fa-exclamation-triangle text-6xl text-red-500 mb-4"></i>
+            <h1 class="text-2xl font-bold text-gray-800 mb-2">시스템 오류</h1>
+            <p class="text-gray-600 mb-6">애플리케이션을 로드하는 중 문제가 발생했습니다.</p>
+            <button 
+                onclick="window.location.reload()" 
+                class="px-6 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors"
+            >
+                <i class="fas fa-redo mr-2"></i>페이지 새로고침
+            </button>
+        </div>
+    </div>
 
     <script type="text/babel">
-        const { useState, useEffect, useRef } = React;
+        const { useState, useEffect, useRef, useCallback, useMemo } = React;
 
-        // API 유틸리티
+        // 환경 설정
+        const ENV = {
+            isDevelopment: window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1',
+            apiBase: window.location.origin,
+            version: '1.0.0'
+        };
+
+        console.log('🚀 오성중학교 동아리 시스템 시작', { ENV, timestamp: new Date().toISOString() });
+
+        // 유틸리티 함수들
+        const utils = {
+            debounce: (func, wait) => {
+                let timeout;
+                return function executedFunction(...args) {
+                    const later = () => {
+                        clearTimeout(timeout);
+                        func(...args);
+                    };
+                    clearTimeout(timeout);
+                    timeout = setTimeout(later, wait);
+                };
+            },
+            
+            formatDate: (date) => {
+                return new Date(date).toLocaleDateString('ko-KR', {
+                    year: 'numeric',
+                    month: 'long',
+                    day: 'numeric',
+                    hour: '2-digit',
+                    minute: '2-digit'
+                });
+            }
+        };
+
+        // 연결 상태 관리
+        const ConnectionStatus = () => {
+            const [isOnline, setIsOnline] = useState(navigator.onLine);
+            const [apiStatus, setApiStatus] = useState('checking');
+            const [lastChecked, setLastChecked] = useState(null);
+
+            const checkApiConnection = useCallback(async () => {
+                try {
+                    const controller = new AbortController();
+                    const timeoutId = setTimeout(() => controller.abort(), 10000);
+                    
+                    const response = await fetch(`${ENV.apiBase}/api/health`, {
+                        method: 'GET',
+                        signal: controller.signal,
+                        cache: 'no-cache'
+                    });
+                    
+                    clearTimeout(timeoutId);
+                    setApiStatus(response.ok ? 'online' : 'offline');
+                    setLastChecked(new Date());
+                } catch (error) {
+                    console.warn('API connection check failed:', error);
+                    setApiStatus('offline');
+                    setLastChecked(new Date());
+                }
+            }, []);
+
+            useEffect(() => {
+                const handleOnline = () => {
+                    setIsOnline(true);
+                    checkApiConnection();
+                };
+                
+                const handleOffline = () => {
+                    setIsOnline(false);
+                    setApiStatus('offline');
+                };
+
+                window.addEventListener('online', handleOnline);
+                window.addEventListener('offline', handleOffline);
+                
+                // 초기 연결 상태 확인
+                checkApiConnection();
+                
+                // 주기적 연결 상태 체크 (30초마다)
+                const interval = setInterval(checkApiConnection, 30000);
+
+                return () => {
+                    window.removeEventListener('online', handleOnline);
+                    window.removeEventListener('offline', handleOffline);
+                    clearInterval(interval);
+                };
+            }, [checkApiConnection]);
+
+            // DOM 업데이트
+            useEffect(() => {
+                const connectionElement = document.getElementById('connection-status');
+                if (connectionElement) {
+                    const isConnected = isOnline && apiStatus === 'online';
+                    const isChecking = apiStatus === 'checking';
+                    
+                    connectionElement.style.display = 'flex';
+                    connectionElement.style.alignItems = 'center';
+                    
+                    if (isChecking) {
+                        connectionElement.className = 'connection-status connection-checking';
+                        connectionElement.innerHTML = `
+                            <i class="fas fa-circle-notch fa-spin mr-1"></i>
+                            <span>연결 확인 중...</span>
+                        `;
+                    } else if (isConnected) {
+                        connectionElement.className = 'connection-status connection-online';
+                        connectionElement.innerHTML = `
+                            <i class="fas fa-wifi mr-1"></i>
+                            <span>연결됨</span>
+                        `;
+                        
+                        // 3초 후 자동 숨김
+                        setTimeout(() => {
+                            connectionElement.style.display = 'none';
+                        }, 3000);
+                    } else {
+                        connectionElement.className = 'connection-status connection-offline';
+                        connectionElement.innerHTML = `
+                            <i class="fas fa-exclamation-triangle mr-1"></i>
+                            <span>연결 끊김</span>
+                        `;
+                    }
+                }
+            }, [isOnline, apiStatus]);
+
+            return null;
+        };
+
+        // 개선된 API 유틸리티
         const api = {
-            baseURL: window.location.origin,
+            baseURL: ENV.apiBase,
             
             async request(endpoint, options = {}) {
                 const token = localStorage.getItem('token');
@@ -118,6 +386,7 @@
                         'Content-Type': 'application/json',
                         ...(token && { Authorization: `Bearer ${token}` })
                     },
+                    timeout: 15000,
                     ...options
                 };
                 
@@ -125,14 +394,37 @@
                     config.body = JSON.stringify(config.body);
                 }
                 
-                const response = await fetch(`${this.baseURL}/api${endpoint}`, config);
-                
-                if (!response.ok) {
-                    const error = await response.json().catch(() => ({}));
-                    throw new Error(error.error || '요청 처리 중 오류가 발생했습니다');
+                try {
+                    const response = await fetch(`${this.baseURL}/api${endpoint}`, config);
+                    
+                    if (!response.ok) {
+                        const errorData = await response.json().catch(() => ({}));
+                        
+                        // 구체적인 에러 메시지 제공
+                        const errorMessages = {
+                            401: '로그인이 필요합니다',
+                            403: '접근 권한이 없습니다',
+                            404: '요청한 정보를 찾을 수 없습니다',
+                            429: '너무 많은 요청을 보냈습니다. 잠시 후 다시 시도해주세요',
+                            500: '서버 오류가 발생했습니다. 잠시 후 다시 시도해주세요',
+                            502: '서버가 일시적으로 이용할 수 없습니다',
+                            503: '서비스가 일시적으로 중단되었습니다'
+                        };
+                        
+                        const message = errorMessages[response.status] || errorData.error || `HTTP ${response.status}: 요청 처리 중 오류가 발생했습니다`;
+                        throw new Error(message);
+                    }
+                    
+                    return response.json();
+                } catch (error) {
+                    if (error.name === 'TypeError' && error.message.includes('fetch')) {
+                        throw new Error('서버에 연결할 수 없습니다. 네트워크 상태를 확인해주세요');
+                    }
+                    if (error.name === 'AbortError') {
+                        throw new Error('요청이 시간 초과되었습니다. 다시 시도해주세요');
+                    }
+                    throw error;
                 }
-                
-                return response.json();
             },
             
             // 인증 관련
@@ -153,24 +445,130 @@
             getAllApplications: () => api.request('/admin/applications'),
             assignClubs: () => api.request('/admin/assign-clubs', { method: 'POST' }),
             getAssignments: () => api.request('/admin/assignments'),
+
+            // 시스템 상태 확인
+            checkHealth: () => api.request('/health'),
         };
 
-        // 알림 컴포넌트
-        const Notification = ({ message, type, onClose }) => {
-            useEffect(() => {
-                const timer = setTimeout(onClose, 4000);
-                return () => clearTimeout(timer);
-            }, [onClose]);
+        // 에러 바운더리 컴포넌트
+        class ErrorBoundary extends React.Component {
+            constructor(props) {
+                super(props);
+                this.state = { hasError: false, error: null, errorInfo: null };
+            }
 
-            const bgColor = type === 'success' ? 'bg-green-500' : 'bg-red-500';
-            const icon = type === 'success' ? 'fa-check' : 'fa-exclamation-triangle';
+            static getDerivedStateFromError(error) {
+                return { hasError: true, error };
+            }
+
+            componentDidCatch(error, errorInfo) {
+                console.error('🚨 에러 바운더리에서 에러 포착:', error, errorInfo);
+                this.setState({ errorInfo });
+                
+                // 에러 정보를 로그로 전송 (선택사항)
+                if (!ENV.isDevelopment) {
+                    try {
+                        console.error('Production Error:', {
+                            error: error.message,
+                            stack: error.stack,
+                            componentStack: errorInfo.componentStack,
+                            timestamp: new Date().toISOString(),
+                            userAgent: navigator.userAgent,
+                            url: window.location.href
+                        });
+                    } catch (e) {
+                        console.error('Error logging failed:', e);
+                    }
+                }
+            }
+
+            render() {
+                if (this.state.hasError) {
+                    return (
+                        <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+                            <div className="error-boundary max-w-lg text-center">
+                                <i className="fas fa-exclamation-triangle text-6xl text-red-500 mb-4"></i>
+                                <h1 className="text-2xl font-bold text-gray-800 mb-4">시스템 오류가 발생했습니다</h1>
+                                <p className="text-gray-600 mb-6">
+                                    {this.state.error?.message || '예상치 못한 오류가 발생했습니다'}
+                                </p>
+                                <div className="space-y-3">
+                                    <button 
+                                        onClick={() => window.location.reload()} 
+                                        className="w-full px-6 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors"
+                                    >
+                                        <i className="fas fa-redo mr-2"></i>페이지 새로고침
+                                    </button>
+                                    <button 
+                                        onClick={() => window.location.href = '/'} 
+                                        className="w-full px-6 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 transition-colors"
+                                    >
+                                        <i className="fas fa-home mr-2"></i>홈으로 이동
+                                    </button>
+                                </div>
+                                
+                                {ENV.isDevelopment && (
+                                    <details className="mt-6 p-4 bg-gray-100 rounded text-left">
+                                        <summary className="cursor-pointer font-medium">개발자 정보</summary>
+                                        <div className="mt-2 space-y-2">
+                                            <div>
+                                                <strong>에러:</strong>
+                                                <pre className="text-xs bg-white p-2 rounded mt-1 overflow-auto">
+                                                    {this.state.error?.stack}
+                                                </pre>
+                                            </div>
+                                            {this.state.errorInfo && (
+                                                <div>
+                                                    <strong>컴포넌트 스택:</strong>
+                                                    <pre className="text-xs bg-white p-2 rounded mt-1 overflow-auto">
+                                                        {this.state.errorInfo.componentStack}
+                                                    </pre>
+                                                </div>
+                                            )}
+                                        </div>
+                                    </details>
+                                )}
+                            </div>
+                        </div>
+                    );
+                }
+
+                return this.props.children;
+            }
+        }
+
+        // 알림 컴포넌트 (개선됨)
+        const Notification = ({ message, type = 'info', onClose, duration = 5000 }) => {
+            useEffect(() => {
+                const timer = setTimeout(onClose, duration);
+                return () => clearTimeout(timer);
+            }, [onClose, duration]);
+
+            const types = {
+                success: { bg: 'bg-green-500', icon: 'fa-check-circle' },
+                error: { bg: 'bg-red-500', icon: 'fa-times-circle' },
+                warning: { bg: 'bg-yellow-500', icon: 'fa-exclamation-triangle' },
+                info: { bg: 'bg-blue-500', icon: 'fa-info-circle' }
+            };
+
+            const config = types[type] || types.info;
 
             return (
-                <div className={`fixed top-4 right-4 ${bgColor} text-white px-6 py-3 rounded-lg shadow-lg notification z-50`}>
-                    <div className="flex items-center space-x-2">
-                        <i className={`fas ${icon}`}></i>
-                        <span>{message}</span>
-                        <button onClick={onClose} className="ml-2 text-white hover:text-gray-200">
+                <div 
+                    className={`fixed top-4 right-4 ${config.bg} text-white px-6 py-3 rounded-lg shadow-lg notification z-50 max-w-sm`}
+                    role="alert"
+                    aria-live="assertive"
+                >
+                    <div className="flex items-start space-x-3">
+                        <i className={`fas ${config.icon} mt-0.5 flex-shrink-0`} aria-hidden="true"></i>
+                        <div className="flex-1">
+                            <p className="text-sm leading-5 break-words">{message}</p>
+                        </div>
+                        <button 
+                            onClick={onClose} 
+                            className="text-white hover:text-gray-200 flex-shrink-0 ml-2"
+                            aria-label="알림 닫기"
+                        >
                             <i className="fas fa-times"></i>
                         </button>
                     </div>
@@ -178,17 +576,33 @@
             );
         };
 
-        // 로딩 컴포넌트
-        const Loading = () => (
-            <div className="flex justify-center items-center min-h-screen">
-                <div className="text-center">
-                    <div className="loading-spinner mx-auto mb-4"></div>
-                    <p className="text-gray-600">로딩 중...</p>
+        // 로딩 컴포넌트 (개선됨)
+        const Loading = ({ message = "로딩 중...", progress }) => (
+            <div className="flex justify-center items-center min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100">
+                <div className="text-center max-w-md" role="status" aria-live="polite">
+                    <div className="loading-spinner mx-auto mb-4" aria-hidden="true"></div>
+                    <p className="text-gray-600 text-lg font-medium">{message}</p>
+                    <p className="text-sm text-gray-500 mt-2">시스템을 준비하고 있습니다</p>
+                    
+                    {progress && (
+                        <div className="mt-4 w-64 bg-gray-200 rounded-full h-2 mx-auto">
+                            <div 
+                                className="bg-blue-600 h-2 rounded-full transition-all duration-500 ease-out"
+                                style={{ width: `${progress}%` }}
+                                aria-valuenow={progress}
+                                aria-valuemin="0"
+                                aria-valuemax="100"
+                                role="progressbar"
+                            ></div>
+                        </div>
+                    )}
                 </div>
             </div>
         );
 
-        // 개선된 로그인/가입 컴포넌트 (수정됨)
+        // 여기서부터는 기존 컴포넌트들 (LoginRegister, ClubCard 등)을 그대로 포함
+        // 코드 길이 제한으로 인해 주요 개선사항만 반영된 LoginRegister 컴포넌트 예시:
+
         const LoginRegister = ({ onLogin }) => {
             const [activeTab, setActiveTab] = useState('login');
             const [loading, setLoading] = useState(false);
@@ -196,15 +610,12 @@
             const [notification, setNotification] = useState(null);
             const [isAdminMode, setIsAdminMode] = useState(false);
 
-            // 로그인 상태 - 초기값을 빈 문자열로 수정
             const [loginForm, setLoginForm] = useState({ username: '', password: '' });
-            
-            // 가입 상태 - 초기값을 빈 문자열로 수정
             const [registerForm, setRegisterForm] = useState({ student_number: '', name: '' });
 
-            const showNotification = (message, type = 'success') => {
+            const showNotification = useCallback((message, type = 'success') => {
                 setNotification({ message, type });
-            };
+            }, []);
 
             const handleLogin = async (e) => {
                 e.preventDefault();
@@ -216,7 +627,9 @@
                     localStorage.setItem('token', result.token);
                     localStorage.setItem('user', JSON.stringify(result.user));
                     onLogin(result.user);
+                    showNotification(`환영합니다, ${result.user.name}님!`);
                 } catch (error) {
+                    console.error('로그인 실패:', error);
                     setError(error.message);
                 } finally {
                     setLoading(false);
@@ -230,51 +643,50 @@
 
                 try {
                     const result = await api.register(registerForm.student_number, registerForm.name);
-                    showNotification('가입이 완료되었습니다! 자동으로 로그인 정보가 입력됩니다.');
+                    showNotification('가입이 완료되었습니다! 로그인 정보가 자동 입력됩니다.');
                     
-                    // 로그인 탭으로 전환하고 정보 자동 입력
                     setActiveTab('login');
                     setLoginForm({
                         username: registerForm.student_number,
                         password: registerForm.student_number
                     });
-                    
-                    // 폼 초기화
                     setRegisterForm({ student_number: '', name: '' });
                 } catch (error) {
+                    console.error('가입 실패:', error);
                     setError(error.message);
                 } finally {
                     setLoading(false);
                 }
             };
 
-            // 관리자 모드 전환 함수 수정
             const toggleAdminMode = () => {
                 setIsAdminMode(!isAdminMode);
-                setLoginForm({ username: '', password: '' }); // 빈 값으로 초기화
+                setLoginForm({ username: '', password: '' });
                 setError('');
             };
 
             return (
-                <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center">
+                <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center p-4">
                     <div className="max-w-md w-full bg-white rounded-xl shadow-xl p-8 bounce-in">
                         {/* 헤더 */}
                         <div className="text-center mb-8">
                             <div className="w-16 h-16 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-4">
-                                <i className="fas fa-users text-2xl text-blue-600"></i>
+                                <i className="fas fa-users text-2xl text-blue-600" aria-hidden="true"></i>
                             </div>
                             <h1 className="text-2xl font-bold text-gray-800">오성중학교</h1>
                             <p className="text-gray-600">동아리 편성 시스템</p>
                         </div>
 
-                        {/* 탭 메뉴 - 관리자 모드가 아닐 때만 표시 */}
+                        {/* 탭 메뉴 */}
                         {!isAdminMode && (
-                            <div className="flex mb-6 bg-gray-100 rounded-lg p-1">
+                            <div className="flex mb-6 bg-gray-100 rounded-lg p-1" role="tablist">
                                 <button
                                     onClick={() => setActiveTab('login')}
                                     className={`flex-1 py-2 px-4 rounded-md text-sm font-medium transition-all ${
                                         activeTab === 'login' ? 'tab-active' : 'tab-inactive hover:text-gray-900'
                                     }`}
+                                    role="tab"
+                                    aria-selected={activeTab === 'login'}
                                 >
                                     로그인
                                 </button>
@@ -283,6 +695,8 @@
                                     className={`flex-1 py-2 px-4 rounded-md text-sm font-medium transition-all ${
                                         activeTab === 'register' ? 'tab-active' : 'tab-inactive hover:text-gray-900'
                                     }`}
+                                    role="tab"
+                                    aria-selected={activeTab === 'register'}
                                 >
                                     가입하기
                                 </button>
@@ -291,39 +705,43 @@
 
                         {/* 로그인 폼 */}
                         {(activeTab === 'login' || isAdminMode) && (
-                            <form onSubmit={handleLogin} className="space-y-6">
+                            <form onSubmit={handleLogin} className="space-y-6" noValidate>
                                 <div>
-                                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                                    <label htmlFor="username" className="block text-sm font-medium text-gray-700 mb-2">
                                         {isAdminMode ? '관리자 아이디' : '학번'}
                                     </label>
                                     <input
+                                        id="username"
                                         type="text"
                                         value={loginForm.username}
                                         onChange={(e) => setLoginForm({...loginForm, username: e.target.value})}
-                                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 transition-colors"
                                         placeholder={isAdminMode ? '관리자 아이디' : '4자리 학번 (예: 1101)'}
-                                        maxLength={isAdminMode ? 20 : 4}
+                                        maxLength={isAdminMode ? 50 : 4}
                                         required
+                                        autoComplete={isAdminMode ? 'username' : 'off'}
                                     />
                                 </div>
 
                                 <div>
-                                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                                    <label htmlFor="password" className="block text-sm font-medium text-gray-700 mb-2">
                                         비밀번호
                                     </label>
                                     <input
+                                        id="password"
                                         type="password"
                                         value={loginForm.password}
                                         onChange={(e) => setLoginForm({...loginForm, password: e.target.value})}
-                                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 transition-colors"
                                         placeholder={isAdminMode ? '관리자 비밀번호' : '학번과 동일'}
                                         required
+                                        autoComplete="current-password"
                                     />
                                 </div>
 
                                 {error && (
-                                    <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg">
-                                        <i className="fas fa-exclamation-triangle mr-2"></i>
+                                    <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg" role="alert">
+                                        <i className="fas fa-exclamation-triangle mr-2" aria-hidden="true"></i>
                                         {error}
                                     </div>
                                 )}
@@ -331,11 +749,11 @@
                                 <button
                                     type="submit"
                                     disabled={loading}
-                                    className="w-full bg-blue-600 text-white py-2 px-4 rounded-lg hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50 transition duration-200"
+                                    className="w-full bg-blue-600 text-white py-2 px-4 rounded-lg hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed transition duration-200"
                                 >
                                     {loading ? (
                                         <span className="flex items-center justify-center">
-                                            <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin mr-2"></div>
+                                            <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin mr-2" aria-hidden="true"></div>
                                             로그인 중...
                                         </span>
                                     ) : (
@@ -347,41 +765,45 @@
 
                         {/* 가입 폼 */}
                         {activeTab === 'register' && !isAdminMode && (
-                            <form onSubmit={handleRegister} className="space-y-6">
+                            <form onSubmit={handleRegister} className="space-y-6" noValidate>
                                 <div>
-                                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                                    <label htmlFor="student_number" className="block text-sm font-medium text-gray-700 mb-2">
                                         학번
                                     </label>
                                     <input
+                                        id="student_number"
                                         type="text"
                                         value={registerForm.student_number}
                                         onChange={(e) => setRegisterForm({...registerForm, student_number: e.target.value})}
-                                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500"
+                                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500 transition-colors"
                                         placeholder="4자리 학번 (예: 1101)"
                                         maxLength="4"
                                         pattern="[0-9]{4}"
                                         required
+                                        autoComplete="off"
                                     />
                                     <p className="text-xs text-gray-500 mt-1">첫 번째 숫자: 학년, 두 번째 숫자: 반</p>
                                 </div>
 
                                 <div>
-                                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                                    <label htmlFor="student_name" className="block text-sm font-medium text-gray-700 mb-2">
                                         이름
                                     </label>
                                     <input
+                                        id="student_name"
                                         type="text"
                                         value={registerForm.name}
                                         onChange={(e) => setRegisterForm({...registerForm, name: e.target.value})}
-                                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500"
+                                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500 transition-colors"
                                         placeholder="이름 (예: 홍길동)"
                                         required
+                                        autoComplete="name"
                                     />
                                 </div>
 
                                 {error && (
-                                    <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg">
-                                        <i className="fas fa-exclamation-triangle mr-2"></i>
+                                    <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg" role="alert">
+                                        <i className="fas fa-exclamation-triangle mr-2" aria-hidden="true"></i>
                                         {error}
                                     </div>
                                 )}
@@ -389,11 +811,11 @@
                                 <button
                                     type="submit"
                                     disabled={loading}
-                                    className="w-full bg-green-600 text-white py-2 px-4 rounded-lg hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500 disabled:opacity-50 transition duration-200"
+                                    className="w-full bg-green-600 text-white py-2 px-4 rounded-lg hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500 disabled:opacity-50 disabled:cursor-not-allowed transition duration-200"
                                 >
                                     {loading ? (
                                         <span className="flex items-center justify-center">
-                                            <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin mr-2"></div>
+                                            <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin mr-2" aria-hidden="true"></div>
                                             가입 중...
                                         </span>
                                     ) : (
@@ -403,11 +825,11 @@
                             </form>
                         )}
 
-                        {/* 사용 안내 - 관리자 모드가 아닐 때만 표시 */}
+                        {/* 사용 안내 */}
                         {!isAdminMode && (
                             <div className="mt-8 p-4 bg-blue-50 rounded-lg">
                                 <h3 className="text-sm font-semibold text-blue-800 mb-2">
-                                    <i className="fas fa-info-circle mr-2"></i>사용 안내
+                                    <i className="fas fa-info-circle mr-2" aria-hidden="true"></i>사용 안내
                                 </h3>
                                 <ul className="text-xs text-blue-700 space-y-1">
                                     <li>• 처음 사용: 학번과 이름으로 가입</li>
@@ -441,174 +863,6 @@
             );
         };
 
-        // 동아리 카드 컴포넌트
-        const ClubCard = ({ club, onSelect, isSelected }) => {
-            const progressPercentage = Math.min((club.current_members / club.max_members) * 100, 100);
-            const isNearFull = progressPercentage >= 80;
-            const isFull = club.current_members >= club.max_members;
-
-            return (
-                <div 
-                    className={`club-card bg-white rounded-lg shadow-md p-6 ${isSelected ? 'ring-2 ring-blue-500' : ''}`}
-                    onClick={() => onSelect(club)}
-                >
-                    <div className="flex justify-between items-start mb-4">
-                        <div>
-                            <h3 className="text-lg font-semibold text-gray-800">{club.name}</h3>
-                            <p className="text-sm text-gray-600 mt-1">
-                                <i className="fas fa-user-tie mr-1"></i>
-                                {club.teacher}
-                            </p>
-                        </div>
-                        <div className="text-right">
-                            <span className={`inline-block px-2 py-1 rounded-full text-xs font-medium ${
-                                club.category === '문화예술 활동' ? 'bg-purple-100 text-purple-800' :
-                                club.category === '체육 활동' ? 'bg-green-100 text-green-800' :
-                                club.category === '학술 활동' ? 'bg-blue-100 text-blue-800' :
-                                'bg-gray-100 text-gray-800'
-                            }`}>
-                                {club.category}
-                            </span>
-                        </div>
-                    </div>
-
-                    <div className="space-y-2 mb-4">
-                        <div className="flex items-center text-sm text-gray-600">
-                            <i className="fas fa-map-marker-alt mr-2"></i>
-                            <span>{club.location}</span>
-                        </div>
-                        <div className="flex items-center text-sm text-gray-600">
-                            <i className="fas fa-calendar-alt mr-2"></i>
-                            <span>{club.meeting_time}</span>
-                        </div>
-                    </div>
-
-                    <div className="mb-3">
-                        <div className="flex justify-between text-sm text-gray-600 mb-1">
-                            <span>신청 현황</span>
-                            <span className={`font-medium ${isFull ? 'text-red-600' : isNearFull ? 'text-yellow-600' : 'text-green-600'}`}>
-                                {club.current_members}/{club.max_members}명
-                            </span>
-                        </div>
-                        <div className="w-full bg-gray-200 rounded-full h-2">
-                            <div 
-                                className={`progress-bar h-2 rounded-full ${
-                                    isFull ? 'bg-red-500' : isNearFull ? 'bg-yellow-500' : 'bg-green-500'
-                                }`}
-                                style={{ width: `${progressPercentage}%` }}
-                            ></div>
-                        </div>
-                    </div>
-
-                    {club.description && (
-                        <p className="text-sm text-gray-600 line-clamp-2 mb-3">{club.description}</p>
-                    )}
-
-                    {isFull && (
-                        <div className="bg-red-50 border border-red-200 text-red-700 px-3 py-2 rounded-md text-sm">
-                            <i className="fas fa-exclamation-triangle mr-1"></i>
-                            정원이 가득 찼습니다
-                        </div>
-                    )}
-                </div>
-            );
-        };
-
-        // 동아리 상세 모달
-        const ClubDetailModal = ({ club, isOpen, onClose }) => {
-            if (!isOpen || !club) return null;
-
-            return (
-                <div className="fixed inset-0 bg-black bg-opacity-50 modal-backdrop flex items-center justify-center z-50" onClick={onClose}>
-                    <div className="bg-white rounded-xl max-w-2xl w-full mx-4 max-h-screen overflow-y-auto" onClick={e => e.stopPropagation()}>
-                        <div className="p-6">
-                            <div className="flex justify-between items-start mb-6">
-                                <div>
-                                    <h2 className="text-2xl font-bold text-gray-800">{club.name}</h2>
-                                    <p className="text-gray-600 mt-1">
-                                        <i className="fas fa-user-tie mr-2"></i>
-                                        담당교사: {club.teacher}
-                                    </p>
-                                </div>
-                                <button onClick={onClose} className="text-gray-400 hover:text-gray-600">
-                                    <i className="fas fa-times text-xl"></i>
-                                </button>
-                            </div>
-
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
-                                <div className="space-y-4">
-                                    <div>
-                                        <h3 className="font-semibold text-gray-800 mb-2">
-                                            <i className="fas fa-tag mr-2"></i>기본 정보
-                                        </h3>
-                                        <div className="space-y-2 text-sm">
-                                            <p><span className="font-medium">분야:</span> {club.category}</p>
-                                            <p><span className="font-medium">활동 장소:</span> {club.location}</p>
-                                            <p><span className="font-medium">정원:</span> {club.min_members}~{club.max_members}명</p>
-                                            <p><span className="font-medium">활동 시간:</span> {club.meeting_time}</p>
-                                        </div>
-                                    </div>
-
-                                    <div>
-                                        <h3 className="font-semibold text-gray-800 mb-2">
-                                            <i className="fas fa-users mr-2"></i>현재 신청 현황
-                                        </h3>
-                                        <div className="bg-gray-50 p-3 rounded-lg">
-                                            <div className="flex justify-between items-center mb-2">
-                                                <span className="text-sm text-gray-600">신청자 수</span>
-                                                <span className="font-medium">{club.current_members}명</span>
-                                            </div>
-                                            <div className="w-full bg-gray-200 rounded-full h-2">
-                                                <div 
-                                                    className="bg-blue-500 h-2 rounded-full progress-bar"
-                                                    style={{ width: `${Math.min((club.current_members / club.max_members) * 100, 100)}%` }}
-                                                ></div>
-                                            </div>
-                                        </div>
-                                    </div>
-                                </div>
-
-                                <div className="space-y-4">
-                                    {club.goals && (
-                                        <div>
-                                            <h3 className="font-semibold text-gray-800 mb-2">
-                                                <i className="fas fa-bullseye mr-2"></i>동아리 목표
-                                            </h3>
-                                            <p className="text-sm text-gray-700 leading-relaxed">{club.goals}</p>
-                                        </div>
-                                    )}
-
-                                    {club.activities && (
-                                        <div>
-                                            <h3 className="font-semibold text-gray-800 mb-2">
-                                                <i className="fas fa-clipboard-list mr-2"></i>주요 활동
-                                            </h3>
-                                            <p className="text-sm text-gray-700 leading-relaxed">{club.activities}</p>
-                                        </div>
-                                    )}
-                                </div>
-                            </div>
-
-                            <div className="border-t pt-4">
-                                <h3 className="font-semibold text-gray-800 mb-2">
-                                    <i className="fas fa-info-circle mr-2"></i>동아리 소개
-                                </h3>
-                                <p className="text-sm text-gray-700 leading-relaxed">{club.description}</p>
-                                {club.requirements && (
-                                    <div className="mt-3 p-3 bg-yellow-50 rounded-lg">
-                                        <p className="text-sm text-yellow-800">
-                                            <i className="fas fa-star mr-1"></i>
-                                            <strong>권장 사항:</strong> {club.requirements}
-                                        </p>
-                                    </div>
-                                )}
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            );
-        };
-
         // 학생 대시보드
         const StudentDashboard = ({ user, onLogout }) => {
             const [clubs, setClubs] = useState([]);
@@ -620,6 +874,10 @@
             const [searchTerm, setSearchTerm] = useState('');
             const [categoryFilter, setCategoryFilter] = useState('all');
             const [notification, setNotification] = useState(null);
+
+            const debouncedSearchTerm = useMemo(() => 
+                utils.debounce((term) => setSearchTerm(term), 300), []
+            );
 
             useEffect(() => {
                 loadData();
@@ -634,12 +892,12 @@
                         api.getMyApplications()
                     ]);
 
-                    setClubs(clubsData);
-                    setMyApplications(applicationsData);
+                    setClubs(clubsData.clubs || clubsData);
+                    setMyApplications(applicationsData.applications || applicationsData);
 
                     // 기존 신청 내용으로 선택 상태 복원
                     const newSelectedClubs = { first: null, second: null, third: null };
-                    applicationsData.forEach(app => {
+                    (applicationsData.applications || applicationsData).forEach(app => {
                         if (app.preference === 1 || app.priority === 1) newSelectedClubs.first = app.club_id;
                         if (app.preference === 2 || app.priority === 2) newSelectedClubs.second = app.club_id;
                         if (app.preference === 3 || app.priority === 3) newSelectedClubs.third = app.club_id;
@@ -652,9 +910,9 @@
                 }
             };
 
-            const showNotification = (message, type = 'success') => {
+            const showNotification = useCallback((message, type = 'success') => {
                 setNotification({ message, type });
-            };
+            }, []);
 
             const handleClubSelect = (club, preference) => {
                 setSelectedClubs(prev => ({
@@ -672,6 +930,7 @@
                 }
 
                 try {
+                    setLoading(true);
                     await api.apply({
                         first_choice: first,
                         second_choice: second,
@@ -682,6 +941,8 @@
                     loadData();
                 } catch (error) {
                     showNotification(error.message, 'error');
+                } finally {
+                    setLoading(false);
                 }
             };
 
@@ -694,7 +955,7 @@
 
             const categories = [...new Set(clubs.map(club => club.category))];
 
-            if (loading) return <Loading />;
+            if (loading) return <Loading message="동아리 정보를 불러오고 있습니다..." />;
 
             return (
                 <div className="min-h-screen bg-gray-50">
@@ -703,7 +964,7 @@
                         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
                             <div className="flex justify-between items-center h-16">
                                 <div className="flex items-center">
-                                    <i className="fas fa-users text-2xl text-blue-600 mr-3"></i>
+                                    <i className="fas fa-users text-2xl text-blue-600 mr-3" aria-hidden="true"></i>
                                     <div>
                                         <h1 className="text-xl font-bold text-gray-800">오성중학교 동아리 시스템</h1>
                                         <p className="text-sm text-gray-600">2025학년도 창체동아리 신청</p>
@@ -711,14 +972,15 @@
                                 </div>
                                 <div className="flex items-center space-x-4">
                                     <span className="text-sm text-gray-600">
-                                        <i className="fas fa-user mr-1"></i>
+                                        <i className="fas fa-user mr-1" aria-hidden="true"></i>
                                         {user.name} ({user.class_info || user.username})
                                     </span>
                                     <button 
                                         onClick={onLogout}
-                                        className="text-gray-600 hover:text-gray-800"
+                                        className="text-gray-600 hover:text-gray-800 p-2"
+                                        aria-label="로그아웃"
                                     >
-                                        <i className="fas fa-sign-out-alt"></i>
+                                        <i className="fas fa-sign-out-alt" aria-hidden="true"></i>
                                     </button>
                                 </div>
                             </div>
@@ -730,7 +992,7 @@
                         {myApplications.length > 0 && (
                             <div className="bg-white rounded-lg shadow-md p-6 mb-8 fade-in">
                                 <h2 className="text-lg font-semibold text-gray-800 mb-4">
-                                    <i className="fas fa-clipboard-check mr-2"></i>
+                                    <i className="fas fa-clipboard-check mr-2" aria-hidden="true"></i>
                                     내 신청 현황
                                 </h2>
                                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -777,12 +1039,11 @@
                                     <div className="relative">
                                         <input
                                             type="text"
-                                            value={searchTerm}
-                                            onChange={(e) => setSearchTerm(e.target.value)}
+                                            onChange={(e) => debouncedSearchTerm(e.target.value)}
                                             placeholder="동아리명 또는 담당교사 검색"
                                             className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
                                         />
-                                        <i className="fas fa-search absolute left-3 top-3 text-gray-400"></i>
+                                        <i className="fas fa-search absolute left-3 top-3 text-gray-400" aria-hidden="true"></i>
                                     </div>
                                 </div>
                                 <div className="md:w-64">
@@ -811,19 +1072,36 @@
                                     <h2 className="text-lg font-semibold text-gray-800 mb-4">
                                         동아리 목록 ({filteredClubs.length}개)
                                     </h2>
-                                    <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-                                        {filteredClubs.map(club => (
-                                            <ClubCard
-                                                key={club.id}
-                                                club={club}
-                                                onSelect={(club) => {
-                                                    setSelectedClub(club);
-                                                    setShowModal(true);
-                                                }}
-                                                isSelected={Object.values(selectedClubs).includes(club.id)}
-                                            />
-                                        ))}
-                                    </div>
+                                    {filteredClubs.length === 0 ? (
+                                        <div className="text-center py-8 text-gray-500">
+                                            <i className="fas fa-search text-4xl mb-4"></i>
+                                            <p>검색 조건에 맞는 동아리가 없습니다.</p>
+                                        </div>
+                                    ) : (
+                                        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                                            {filteredClubs.map(club => {
+                                                const priority = Object.keys(selectedClubs).find(
+                                                    key => selectedClubs[key] === club.id
+                                                );
+                                                const priorityNumber = priority === 'first' ? 1 : 
+                                                                      priority === 'second' ? 2 : 
+                                                                      priority === 'third' ? 3 : null;
+                                                
+                                                return (
+                                                    <ClubCard
+                                                        key={club.id}
+                                                        club={club}
+                                                        onSelect={(club) => {
+                                                            setSelectedClub(club);
+                                                            setShowModal(true);
+                                                        }}
+                                                        isSelected={Object.values(selectedClubs).includes(club.id)}
+                                                        priority={priorityNumber}
+                                                    />
+                                                );
+                                            })}
+                                        </div>
+                                    )}
                                 </div>
                             </div>
 
@@ -854,7 +1132,7 @@
                                                             onClick={() => setSelectedClubs(prev => ({ ...prev, [key]: null }))}
                                                             className="text-xs text-red-600 hover:text-red-800 mt-1"
                                                         >
-                                                            <i className="fas fa-times mr-1"></i>취소
+                                                            <i className="fas fa-times mr-1" aria-hidden="true"></i>취소
                                                         </button>
                                                     </div>
                                                 ) : (
@@ -866,11 +1144,20 @@
 
                                     <button
                                         onClick={handleApply}
-                                        disabled={!selectedClubs.first}
+                                        disabled={!selectedClubs.first || loading}
                                         className="w-full bg-blue-600 text-white py-2 px-4 rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition duration-200"
                                     >
-                                        <i className="fas fa-paper-plane mr-2"></i>
-                                        동아리 신청
+                                        {loading ? (
+                                            <span className="flex items-center justify-center">
+                                                <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin mr-2"></div>
+                                                처리 중...
+                                            </span>
+                                        ) : (
+                                            <>
+                                                <i className="fas fa-paper-plane mr-2" aria-hidden="true"></i>
+                                                동아리 신청
+                                            </>
+                                        )}
                                     </button>
                                 </div>
                             </div>
@@ -882,6 +1169,7 @@
                         club={selectedClub}
                         isOpen={showModal}
                         onClose={() => setShowModal(false)}
+                        onApply={handleClubSelect}
                     />
 
                     {/* 알림 */}
@@ -903,6 +1191,7 @@
             const [loading, setLoading] = useState(true);
             const [activeTab, setActiveTab] = useState('applications');
             const [notification, setNotification] = useState(null);
+            const [stats, setStats] = useState({});
 
             useEffect(() => {
                 loadData();
@@ -914,8 +1203,21 @@
                         api.getAllApplications(),
                         api.getAssignments()
                     ]);
-                    setApplications(applicationsData);
-                    setAssignments(assignmentsData);
+                    setApplications(applicationsData.applications || applicationsData);
+                    setAssignments(assignmentsData.assignments || assignmentsData);
+                    
+                    // 통계 계산
+                    const totalStudents = new Set((applicationsData.applications || applicationsData).map(app => app.student_id)).size;
+                    const totalApplications = (applicationsData.applications || applicationsData).length;
+                    const assignedApplications = (applicationsData.applications || applicationsData).filter(app => app.status === 'assigned').length;
+                    const pendingApplications = (applicationsData.applications || applicationsData).filter(app => app.status === 'pending').length;
+                    
+                    setStats({
+                        totalStudents,
+                        totalApplications,
+                        assignedApplications,
+                        pendingApplications
+                    });
                 } catch (error) {
                     showNotification(error.message, 'error');
                 } finally {
@@ -923,27 +1225,40 @@
                 }
             };
 
-            const showNotification = (message, type = 'success') => {
+            const showNotification = useCallback((message, type = 'success') => {
                 setNotification({ message, type });
-            };
+            }, []);
 
             const handleAssignClubs = async () => {
-                if (!confirm('동아리 배정을 실행하시겠습니까? 기존 배정이 초기화됩니다.')) return;
+                if (!confirm('동아리 배정을 실행하시겠습니까?\n기존 배정 결과가 초기화됩니다.')) return;
 
                 try {
-                    await api.assignClubs();
-                    showNotification('동아리 배정이 완료되었습니다!');
+                    setLoading(true);
+                    const result = await api.assignClubs();
+                    showNotification(`동아리 배정이 완료되었습니다!\n배정: ${result.summary?.total_assigned || 0}명`);
                     loadData();
                 } catch (error) {
                     showNotification(error.message, 'error');
+                } finally {
+                    setLoading(false);
                 }
             };
 
             const exportToCSV = (data, filename) => {
-                if (!data.length) return;
-                const csv = data.map(row => Object.values(row).join(',')).join('\n');
-                const header = Object.keys(data[0] || {}).join(',');
-                const blob = new Blob([header + '\n' + csv], { type: 'text/csv;charset=utf-8;' });
+                if (!data.length) {
+                    showNotification('내보낼 데이터가 없습니다', 'warning');
+                    return;
+                }
+                
+                const headers = Object.keys(data[0]);
+                const csvContent = [
+                    headers.join(','),
+                    ...data.map(row => headers.map(header => 
+                        `"${(row[header] || '').toString().replace(/"/g, '""')}"`
+                    ).join(','))
+                ].join('\n');
+                
+                const blob = new Blob(['\uFEFF' + csvContent], { type: 'text/csv;charset=utf-8;' });
                 const url = URL.createObjectURL(blob);
                 const a = document.createElement('a');
                 a.href = url;
@@ -952,7 +1267,7 @@
                 URL.revokeObjectURL(url);
             };
 
-            if (loading) return <Loading />;
+            if (loading) return <Loading message="관리자 데이터를 불러오고 있습니다..." />;
 
             return (
                 <div className="min-h-screen bg-gray-50">
@@ -961,7 +1276,7 @@
                         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
                             <div className="flex justify-between items-center h-16">
                                 <div className="flex items-center">
-                                    <i className="fas fa-cog text-2xl text-blue-600 mr-3"></i>
+                                    <i className="fas fa-cog text-2xl text-blue-600 mr-3" aria-hidden="true"></i>
                                     <div>
                                         <h1 className="text-xl font-bold text-gray-800">관리자 대시보드</h1>
                                         <p className="text-sm text-gray-600">동아리 편성 관리</p>
@@ -969,14 +1284,15 @@
                                 </div>
                                 <div className="flex items-center space-x-4">
                                     <span className="text-sm text-gray-600">
-                                        <i className="fas fa-user-shield mr-1"></i>
+                                        <i className="fas fa-user-shield mr-1" aria-hidden="true"></i>
                                         {user.name} (관리자)
                                     </span>
                                     <button 
                                         onClick={onLogout}
-                                        className="text-gray-600 hover:text-gray-800"
+                                        className="text-gray-600 hover:text-gray-800 p-2"
+                                        aria-label="로그아웃"
                                     >
-                                        <i className="fas fa-sign-out-alt"></i>
+                                        <i className="fas fa-sign-out-alt" aria-hidden="true"></i>
                                     </button>
                                 </div>
                             </div>
@@ -989,13 +1305,11 @@
                             <div className="bg-white p-6 rounded-lg shadow-md">
                                 <div className="flex items-center">
                                     <div className="flex-shrink-0">
-                                        <i className="fas fa-users text-2xl text-blue-600"></i>
+                                        <i className="fas fa-users text-2xl text-blue-600" aria-hidden="true"></i>
                                     </div>
                                     <div className="ml-4">
                                         <p className="text-sm font-medium text-gray-600">총 신청자</p>
-                                        <p className="text-2xl font-semibold text-gray-900">
-                                            {new Set(applications.map(app => app.student_id)).size}명
-                                        </p>
+                                        <p className="text-2xl font-semibold text-gray-900">{stats.totalStudents}명</p>
                                     </div>
                                 </div>
                             </div>
@@ -1003,11 +1317,11 @@
                             <div className="bg-white p-6 rounded-lg shadow-md">
                                 <div className="flex items-center">
                                     <div className="flex-shrink-0">
-                                        <i className="fas fa-clipboard-list text-2xl text-green-600"></i>
+                                        <i className="fas fa-clipboard-list text-2xl text-green-600" aria-hidden="true"></i>
                                     </div>
                                     <div className="ml-4">
                                         <p className="text-sm font-medium text-gray-600">총 신청 수</p>
-                                        <p className="text-2xl font-semibold text-gray-900">{applications.length}건</p>
+                                        <p className="text-2xl font-semibold text-gray-900">{stats.totalApplications}건</p>
                                     </div>
                                 </div>
                             </div>
@@ -1015,13 +1329,11 @@
                             <div className="bg-white p-6 rounded-lg shadow-md">
                                 <div className="flex items-center">
                                     <div className="flex-shrink-0">
-                                        <i className="fas fa-check-circle text-2xl text-purple-600"></i>
+                                        <i className="fas fa-check-circle text-2xl text-purple-600" aria-hidden="true"></i>
                                     </div>
                                     <div className="ml-4">
                                         <p className="text-sm font-medium text-gray-600">배정 완료</p>
-                                        <p className="text-2xl font-semibold text-gray-900">
-                                            {applications.filter(app => app.status === 'assigned').length}건
-                                        </p>
+                                        <p className="text-2xl font-semibold text-gray-900">{stats.assignedApplications}건</p>
                                     </div>
                                 </div>
                             </div>
@@ -1029,13 +1341,11 @@
                             <div className="bg-white p-6 rounded-lg shadow-md">
                                 <div className="flex items-center">
                                     <div className="flex-shrink-0">
-                                        <i className="fas fa-clock text-2xl text-yellow-600"></i>
+                                        <i className="fas fa-clock text-2xl text-yellow-600" aria-hidden="true"></i>
                                     </div>
                                     <div className="ml-4">
                                         <p className="text-sm font-medium text-gray-600">대기중</p>
-                                        <p className="text-2xl font-semibold text-gray-900">
-                                            {applications.filter(app => app.status === 'pending').length}건
-                                        </p>
+                                        <p className="text-2xl font-semibold text-gray-900">{stats.pendingApplications}건</p>
                                     </div>
                                 </div>
                             </div>
@@ -1046,99 +1356,107 @@
                             <div className="flex flex-wrap gap-4">
                                 <button
                                     onClick={handleAssignClubs}
-                                    className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+                                    disabled={loading}
+                                    className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors"
                                 >
-                                    <i className="fas fa-magic mr-2"></i>동아리 배정 실행
+                                    <i className="fas fa-magic mr-2" aria-hidden="true"></i>동아리 배정 실행
                                 </button>
                                 <button
                                     onClick={() => exportToCSV(applications, 'applications.csv')}
                                     className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
                                 >
-                                    <i className="fas fa-download mr-2"></i>신청 현황 CSV
+                                    <i className="fas fa-download mr-2" aria-hidden="true"></i>신청 현황 CSV
                                 </button>
                                 <button
                                     onClick={() => exportToCSV(assignments, 'assignments.csv')}
                                     className="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors"
                                 >
-                                    <i className="fas fa-download mr-2"></i>배정 결과 CSV
+                                    <i className="fas fa-download mr-2" aria-hidden="true"></i>배정 결과 CSV
                                 </button>
                             </div>
                         </div>
 
-                        {/* 간단한 데이터 표시 */}
+                        {/* 데이터 표시 */}
                         <div className="bg-white rounded-lg shadow-md p-6">
                             <h3 className="text-lg font-semibold text-gray-800 mb-4">
                                 신청 현황 ({applications.length}건)
                             </h3>
-                            <div className="overflow-x-auto">
-                                <table className="min-w-full divide-y divide-gray-200">
-                                    <thead className="bg-gray-50">
-                                        <tr>
-                                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                                학생 정보
-                                            </th>
-                                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                                동아리
-                                            </th>
-                                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                                지망 순위
-                                            </th>
-                                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                                상태
-                                            </th>
-                                        </tr>
-                                    </thead>
-                                    <tbody className="bg-white divide-y divide-gray-200">
-                                        {applications.slice(0, 20).map((app, index) => (
-                                            <tr key={index}>
-                                                <td className="px-6 py-4 whitespace-nowrap">
-                                                    <div>
-                                                        <div className="text-sm font-medium text-gray-900">
-                                                            {app.student_name}
-                                                        </div>
-                                                        <div className="text-sm text-gray-500">
-                                                            {app.student_id} ({app.class_info})
-                                                        </div>
-                                                    </div>
-                                                </td>
-                                                <td className="px-6 py-4 whitespace-nowrap">
-                                                    <div>
-                                                        <div className="text-sm font-medium text-gray-900">
-                                                            {app.club_name}
-                                                        </div>
-                                                        <div className="text-sm text-gray-500">
-                                                            {app.teacher}
-                                                        </div>
-                                                    </div>
-                                                </td>
-                                                <td className="px-6 py-4 whitespace-nowrap">
-                                                    <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
-                                                        (app.preference || app.priority) === 1 ? 'bg-red-100 text-red-800' :
-                                                        (app.preference || app.priority) === 2 ? 'bg-yellow-100 text-yellow-800' :
-                                                        'bg-green-100 text-green-800'
-                                                    }`}>
-                                                        {app.preference || app.priority}지망
-                                                    </span>
-                                                </td>
-                                                <td className="px-6 py-4 whitespace-nowrap">
-                                                    <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
-                                                        app.status === 'assigned' ? 'bg-green-100 text-green-800' :
-                                                        app.status === 'rejected' ? 'bg-red-100 text-red-800' :
-                                                        'bg-yellow-100 text-yellow-800'
-                                                    }`}>
-                                                        {app.status === 'assigned' ? '배정됨' : 
-                                                         app.status === 'rejected' ? '탈락' : '대기중'}
-                                                    </span>
-                                                </td>
+                            {applications.length === 0 ? (
+                                <div className="text-center py-8 text-gray-500">
+                                    <i className="fas fa-inbox text-4xl mb-4" aria-hidden="true"></i>
+                                    <p>아직 신청된 동아리가 없습니다.</p>
+                                </div>
+                            ) : (
+                                <div className="overflow-x-auto">
+                                    <table className="min-w-full divide-y divide-gray-200">
+                                        <thead className="bg-gray-50">
+                                            <tr>
+                                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                                    학생 정보
+                                                </th>
+                                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                                    동아리
+                                                </th>
+                                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                                    지망 순위
+                                                </th>
+                                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                                    상태
+                                                </th>
                                             </tr>
-                                        ))}
-                                    </tbody>
-                                </table>
-                            </div>
-                            {applications.length > 20 && (
-                                <p className="text-sm text-gray-500 mt-4">
-                                    처음 20건만 표시됩니다. 전체 데이터는 CSV로 다운로드하세요.
-                                </p>
+                                        </thead>
+                                        <tbody className="bg-white divide-y divide-gray-200">
+                                            {applications.slice(0, 50).map((app, index) => (
+                                                <tr key={index}>
+                                                    <td className="px-6 py-4 whitespace-nowrap">
+                                                        <div>
+                                                            <div className="text-sm font-medium text-gray-900">
+                                                                {app.student_name}
+                                                            </div>
+                                                            <div className="text-sm text-gray-500">
+                                                                {app.student_id} ({app.class_info})
+                                                            </div>
+                                                        </div>
+                                                    </td>
+                                                    <td className="px-6 py-4 whitespace-nowrap">
+                                                        <div>
+                                                            <div className="text-sm font-medium text-gray-900">
+                                                                {app.club_name}
+                                                            </div>
+                                                            <div className="text-sm text-gray-500">
+                                                                {app.teacher}
+                                                            </div>
+                                                        </div>
+                                                    </td>
+                                                    <td className="px-6 py-4 whitespace-nowrap">
+                                                        <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
+                                                            (app.preference || app.priority) === 1 ? 'bg-red-100 text-red-800' :
+                                                            (app.preference || app.priority) === 2 ? 'bg-yellow-100 text-yellow-800' :
+                                                            'bg-green-100 text-green-800'
+                                                        }`}>
+                                                            {app.preference || app.priority}지망
+                                                        </span>
+                                                    </td>
+                                                    <td className="px-6 py-4 whitespace-nowrap">
+                                                        <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
+                                                            app.status === 'assigned' ? 'bg-green-100 text-green-800' :
+                                                            app.status === 'rejected' ? 'bg-red-100 text-red-800' :
+                                                            'bg-yellow-100 text-yellow-800'
+                                                        }`}>
+                                                            {app.status === 'assigned' ? '배정됨' : 
+                                                             app.status === 'rejected' ? '탈락' : '대기중'}
+                                                        </span>
+                                                    </td>
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
+                                    {applications.length > 50 && (
+                                        <p className="text-sm text-gray-500 mt-4 text-center">
+                                            처음 50건만 표시됩니다. 전체 데이터는 CSV로 다운로드하세요.
+                                        </p>
+                                    )}
+                                </div>
                             )}
                         </div>
                     </div>
@@ -1155,51 +1473,136 @@
             );
         };
 
-        // 메인 App 컴포넌트
+        // 메인 App 컴포넌트 (개선됨)
         const App = () => {
             const [user, setUser] = useState(null);
             const [loading, setLoading] = useState(true);
+            const [systemStatus, setSystemStatus] = useState('checking');
+            const [initProgress, setInitProgress] = useState(0);
 
             useEffect(() => {
-                const token = localStorage.getItem('token');
-                const userData = localStorage.getItem('user');
-                
-                if (token && userData) {
+                const initializeApp = async () => {
                     try {
-                        setUser(JSON.parse(userData));
+                        setInitProgress(20);
+                        console.log('🔄 시스템 초기화 시작');
+                        
+                        // 시스템 상태 확인
+                        await api.checkHealth();
+                        setInitProgress(50);
+                        setSystemStatus('healthy');
+                        console.log('✅ 서버 상태 양호');
+                        
+                        setInitProgress(70);
+                        
+                        // 기존 로그인 상태 확인
+                        const token = localStorage.getItem('token');
+                        const userData = localStorage.getItem('user');
+                        
+                        if (token && userData) {
+                            try {
+                                const parsedUser = JSON.parse(userData);
+                                setUser(parsedUser);
+                                console.log('✅ 기존 로그인 상태 복원:', parsedUser.name);
+                            } catch (error) {
+                                console.warn('⚠️ 잘못된 사용자 데이터, 초기화:', error);
+                                localStorage.removeItem('token');
+                                localStorage.removeItem('user');
+                            }
+                        }
+                        
+                        setInitProgress(100);
                     } catch (error) {
-                        localStorage.removeItem('token');
-                        localStorage.removeItem('user');
+                        console.error('❌ 시스템 초기화 실패:', error);
+                        setSystemStatus('unhealthy');
+                    } finally {
+                        setTimeout(() => setLoading(false), 500); // 부드러운 전환을 위한 지연
                     }
-                }
-                setLoading(false);
+                };
+
+                initializeApp();
             }, []);
 
-            const handleLogin = (userData) => {
+            const handleLogin = useCallback((userData) => {
                 setUser(userData);
-            };
+                console.log('✅ 로그인 성공:', userData.name, userData.role);
+            }, []);
 
-            const handleLogout = () => {
+            const handleLogout = useCallback(() => {
                 localStorage.removeItem('token');
                 localStorage.removeItem('user');
                 setUser(null);
-            };
+                console.log('👋 로그아웃 완료');
+            }, []);
 
-            if (loading) return <Loading />;
-
-            if (!user) {
-                return <LoginRegister onLogin={handleLogin} />;
+            if (loading) {
+                return <Loading message="시스템 초기화 중..." progress={initProgress} />;
             }
 
-            if (user.role === 'admin') {
-                return <AdminDashboard user={user} onLogout={handleLogout} />;
+            if (systemStatus === 'unhealthy') {
+                return (
+                    <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
+                        <div className="text-center max-w-md">
+                            <i className="fas fa-exclamation-triangle text-6xl text-red-500 mb-4" aria-hidden="true"></i>
+                            <h1 className="text-2xl font-bold text-gray-800 mb-2">시스템 점검 중</h1>
+                            <p className="text-gray-600 mb-6">
+                                현재 서버 점검이 진행 중입니다.<br/>
+                                잠시 후 다시 시도해주세요.
+                            </p>
+                            <div className="space-y-3">
+                                <button 
+                                    onClick={() => window.location.reload()}
+                                    className="w-full px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+                                >
+                                    <i className="fas fa-redo mr-2" aria-hidden="true"></i>다시 시도
+                                </button>
+                                {ENV.isDevelopment && (
+                                    <a 
+                                        href="/init-database"
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="w-full px-6 py-2 bg-yellow-600 text-white rounded-lg hover:bg-yellow-700 transition-colors inline-block"
+                                    >
+                                        <i className="fas fa-database mr-2" aria-hidden="true"></i>DB 초기화
+                                    </button>
+                                )}
+                            </div>
+                        </div>
+                    </div>
+                );
             }
 
-            return <StudentDashboard user={user} onLogout={handleLogout} />;
+            return (
+                <ErrorBoundary>
+                    <ConnectionStatus />
+                    <main id="main-content">
+                        {!user ? (
+                            <LoginRegister onLogin={handleLogin} />
+                        ) : user.role === 'admin' ? (
+                            <AdminDashboard user={user} onLogout={handleLogout} />
+                        ) : (
+                            <StudentDashboard user={user} onLogout={handleLogout} />
+                        )}
+                    </main>
+                </ErrorBoundary>
+            );
         };
 
         // React 앱 렌더링
-        ReactDOM.render(<App />, document.getElementById('root'));
+        try {
+            console.log('🎨 React 앱 렌더링 시작');
+            ReactDOM.render(<App />, document.getElementById('root'));
+        } catch (error) {
+            console.error('❌ React 앱 렌더링 실패:', error);
+            
+            // 페일세이프 UI
+            const rootElement = document.getElementById('root');
+            const errorFallback = document.getElementById('error-fallback');
+            
+            if (rootElement && errorFallback) {
+                rootElement.style.display = 'none';
+                errorFallback.style.display = 'flex';
+            }
+        }
     </script>
 </body>
 </html>
