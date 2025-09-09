@@ -409,19 +409,8 @@ app.post('/api/admin/init-db', async (req, res) => {
   }
 });
 
-// 정적 파일 제공 (React 앱)
-app.get('*', (req, res) => {
-  res.sendFile(__dirname + '/public/index.html');
-});
-
-// 서버 시작
-app.listen(PORT, () => {
-  console.log(`🚀 오성중학교 동아리 시스템이 포트 ${PORT}에서 실행중입니다`);
-  console.log(`📱 접속 주소: http://localhost:${PORT}`);
-});
-
 // ========================================
-// 🚀 데이터베이스 자동 초기화 기능 추가
+// 데이터베이스 자동 초기화 기능 (중요: catch-all 라우트 이전에 위치!)
 // ========================================
 
 // 데이터베이스 초기화 라우트
@@ -487,7 +476,6 @@ app.get('/init-database', async (req, res) => {
     console.log('✅ 테이블 생성 완료');
 
     // 2. 기본 사용자 데이터 생성
-    const bcrypt = require('bcrypt');
     const adminPassword = await bcrypt.hash('admin123', 10);
     const studentPassword = await bcrypt.hash('student123', 10);
 
@@ -530,7 +518,7 @@ app.get('/init-database', async (req, res) => {
       ['음악부', '한음악', 22, '악기 연주와 합창 활동', '음악을 사랑하는 학생', '음악실', '월/목 4교시 후'],
       ['독서부', '정독서', 30, '독서 토론과 독후감 작성 활동', '책 읽기를 좋아하는 학생', '도서관', '수/금 4교시 후'],
       ['영어회화부', '김영어', 20, '원어민과 함께하는 영어회화 연습', '영어 회화 실력 향상을 원하는 학생', '영어교실', '화/목 4교시 후'],
-      ['댓스부', '이댄스', 16, '다양한 장르의 댄스 배우기', '춤에 관심이 많은 학생', '체육관', '월/수/금 4교시 후']
+      ['댄스부', '이댄스', 16, '다양한 장르의 댄스 배우기', '춤에 관심이 많은 학생', '체육관', '월/수/금 4교시 후']
     ];
 
     for (const [name, teacher, capacity, description, requirements, location, time] of clubs) {
@@ -626,4 +614,17 @@ app.get('/check-database', async (req, res) => {
       message: '데이터베이스 테이블이 아직 생성되지 않았습니다. /init-database를 먼저 실행하세요.'
     });
   }
+});
+
+// ========================================
+// 정적 파일 제공 (React 앱) - 중요: 이 라우트는 반드시 맨 마지막에 위치해야 함!
+// ========================================
+app.get('*', (req, res) => {
+  res.sendFile(__dirname + '/public/index.html');
+});
+
+// 서버 시작
+app.listen(PORT, () => {
+  console.log(`🚀 오성중학교 동아리 시스템이 포트 ${PORT}에서 실행중입니다`);
+  console.log(`📱 접속 주소: http://localhost:${PORT}`);
 });
