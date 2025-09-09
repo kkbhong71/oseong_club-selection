@@ -312,6 +312,6 @@ psql -d osung_club_db -c "SELECT COUNT(*) FROM users;"
 **🎓 오성중학교 동아리 편성 시스템**  
 *학생들의 꿈과 재능을 키우는 디지털 플랫폼*
 
-**개발**: Claude AI Assistant wtih KGB Technology 
+**개발**: Claude AI Assistance with K.G.B Technology
 **목적**: 교육 혁신 및 디지털 전환 지원  
 **버전**: 1.0.0 (2025.09.09)
