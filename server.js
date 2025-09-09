@@ -419,3 +419,211 @@ app.listen(PORT, () => {
   console.log(`🚀 오성중학교 동아리 시스템이 포트 ${PORT}에서 실행중입니다`);
   console.log(`📱 접속 주소: http://localhost:${PORT}`);
 });
+
+// ========================================
+// 🚀 데이터베이스 자동 초기화 기능 추가
+// ========================================
+
+// 데이터베이스 초기화 라우트
+app.get('/init-database', async (req, res) => {
+  try {
+    console.log('🚀 데이터베이스 초기화 시작...');
+    
+    // 1. 테이블 생성 (IF NOT EXISTS로 중복 생성 방지)
+    const createTablesSQL = `
+      -- 사용자 테이블 생성
+      CREATE TABLE IF NOT EXISTS users (
+          id SERIAL PRIMARY KEY,
+          username VARCHAR(50) UNIQUE NOT NULL,
+          password VARCHAR(255) NOT NULL,
+          name VARCHAR(100) NOT NULL,
+          role VARCHAR(20) DEFAULT 'student',
+          class_info VARCHAR(20),
+          student_number VARCHAR(20),
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+
+      -- 동아리 테이블 생성
+      CREATE TABLE IF NOT EXISTS clubs (
+          id SERIAL PRIMARY KEY,
+          name VARCHAR(100) NOT NULL,
+          teacher VARCHAR(100) NOT NULL,
+          max_capacity INTEGER DEFAULT 30,
+          description TEXT,
+          requirements TEXT,
+          location VARCHAR(100),
+          meeting_time VARCHAR(100),
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+
+      -- 동아리 신청 테이블 생성
+      CREATE TABLE IF NOT EXISTS applications (
+          id SERIAL PRIMARY KEY,
+          user_id INTEGER REFERENCES users(id),
+          club_id INTEGER REFERENCES clubs(id),
+          priority INTEGER CHECK (priority IN (1, 2, 3)),
+          status VARCHAR(20) DEFAULT 'pending',
+          applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          UNIQUE(user_id, priority)
+      );
+
+      -- 최종 배정 테이블 생성
+      CREATE TABLE IF NOT EXISTS assignments (
+          id SERIAL PRIMARY KEY,
+          user_id INTEGER REFERENCES users(id),
+          club_id INTEGER REFERENCES clubs(id),
+          assigned_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          UNIQUE(user_id)
+      );
+
+      -- 인덱스 생성
+      CREATE INDEX IF NOT EXISTS idx_applications_user_id ON applications(user_id);
+      CREATE INDEX IF NOT EXISTS idx_applications_club_id ON applications(club_id);
+      CREATE INDEX IF NOT EXISTS idx_assignments_user_id ON assignments(user_id);
+      CREATE INDEX IF NOT EXISTS idx_assignments_club_id ON assignments(club_id);
+    `;
+
+    await pool.query(createTablesSQL);
+    console.log('✅ 테이블 생성 완료');
+
+    // 2. 기본 사용자 데이터 생성
+    const bcrypt = require('bcrypt');
+    const adminPassword = await bcrypt.hash('admin123', 10);
+    const studentPassword = await bcrypt.hash('student123', 10);
+
+    // 관리자 계정 확인 및 생성
+    const adminCheck = await pool.query('SELECT id FROM users WHERE username = $1', ['admin']);
+    if (adminCheck.rows.length === 0) {
+      await pool.query(
+        'INSERT INTO users (username, password, name, role) VALUES ($1, $2, $3, $4)',
+        ['admin', adminPassword, '시스템 관리자', 'admin']
+      );
+      console.log('✅ 관리자 계정 생성 완료');
+    }
+
+    // 테스트 학생 계정들 생성
+    const students = [
+      ['20251001', '김학생', '1학년 1반', '20251001'],
+      ['20251002', '이학생', '1학년 2반', '20251002'],
+      ['20251003', '박학생', '2학년 1반', '20251003'],
+      ['20251004', '최학생', '2학년 2반', '20251004'],
+      ['20251005', '정학생', '3학년 1반', '20251005']
+    ];
+
+    for (const [username, name, classInfo, studentNumber] of students) {
+      const studentCheck = await pool.query('SELECT id FROM users WHERE username = $1', [username]);
+      if (studentCheck.rows.length === 0) {
+        await pool.query(
+          'INSERT INTO users (username, password, name, role, class_info, student_number) VALUES ($1, $2, $3, $4, $5, $6)',
+          [username, studentPassword, name, 'student', classInfo, studentNumber]
+        );
+      }
+    }
+    console.log('✅ 학생 계정 생성 완료');
+
+    // 3. 동아리 데이터 생성
+    const clubs = [
+      ['축구부', '김체육', 25, '축구를 통한 체력 증진과 팀워크 향상', '운동을 좋아하는 학생', '운동장', '월/수/금 4교시 후'],
+      ['과학탐구부', '이과학', 20, '다양한 과학 실험과 탐구 활동', '과학에 관심이 많은 학생', '과학실', '화/목 4교시 후'],
+      ['컴퓨터부', '박정보', 15, '프로그래밍과 컴퓨터 활용 능력 향상', '컴퓨터에 관심이 있는 학생', '컴퓨터실', '월/수 4교시 후'],
+      ['미술부', '최미술', 18, '다양한 미술 기법 학습과 작품 활동', '그림 그리기를 좋아하는 학생', '미술실', '화/금 4교시 후'],
+      ['음악부', '한음악', 22, '악기 연주와 합창 활동', '음악을 사랑하는 학생', '음악실', '월/목 4교시 후'],
+      ['독서부', '정독서', 30, '독서 토론과 독후감 작성 활동', '책 읽기를 좋아하는 학생', '도서관', '수/금 4교시 후'],
+      ['영어회화부', '김영어', 20, '원어민과 함께하는 영어회화 연습', '영어 회화 실력 향상을 원하는 학생', '영어교실', '화/목 4교시 후'],
+      ['댓스부', '이댄스', 16, '다양한 장르의 댄스 배우기', '춤에 관심이 많은 학생', '체육관', '월/수/금 4교시 후']
+    ];
+
+    for (const [name, teacher, capacity, description, requirements, location, time] of clubs) {
+      const clubCheck = await pool.query('SELECT id FROM clubs WHERE name = $1', [name]);
+      if (clubCheck.rows.length === 0) {
+        await pool.query(
+          'INSERT INTO clubs (name, teacher, max_capacity, description, requirements, location, meeting_time) VALUES ($1, $2, $3, $4, $5, $6, $7)',
+          [name, teacher, capacity, description, requirements, location, time]
+        );
+      }
+    }
+    console.log('✅ 동아리 데이터 생성 완료');
+
+    // 4. 완료 상태 확인
+    const stats = await pool.query(`
+      SELECT 'users' as table_name, count(*) as record_count FROM users
+      UNION ALL
+      SELECT 'clubs' as table_name, count(*) as record_count FROM clubs
+      UNION ALL
+      SELECT 'applications' as table_name, count(*) as record_count FROM applications
+      UNION ALL
+      SELECT 'assignments' as table_name, count(*) as record_count FROM assignments
+      ORDER BY table_name
+    `);
+
+    console.log('📊 데이터베이스 통계:', stats.rows);
+
+    // 5. 성공 응답
+    res.json({
+      success: true,
+      message: '🎉 오성중학교 동아리 시스템 데이터베이스 초기화가 완료되었습니다!',
+      statistics: stats.rows,
+      loginInfo: {
+        admin: {
+          username: 'admin',
+          password: 'admin123',
+          description: '관리자 계정 - 동아리 편성 관리'
+        },
+        students: [
+          { username: '20251001', password: 'student123', name: '김학생', class: '1학년 1반' },
+          { username: '20251002', password: 'student123', name: '이학생', class: '1학년 2반' },
+          { username: '20251003', password: 'student123', name: '박학생', class: '2학년 1반' },
+          { username: '20251004', password: 'student123', name: '최학생', class: '2학년 2반' },
+          { username: '20251005', password: 'student123', name: '정학생', class: '3학년 1반' }
+        ]
+      },
+      clubsCreated: clubs.length,
+      nextStep: '메인 페이지로 돌아가서 로그인하세요!'
+    });
+
+  } catch (error) {
+    console.error('❌ 데이터베이스 초기화 오류:', error);
+    res.status(500).json({
+      success: false,
+      message: '데이터베이스 초기화 중 오류가 발생했습니다.',
+      error: error.message,
+      hint: 'Render 로그를 확인하세요'
+    });
+  }
+});
+
+// 데이터베이스 상태 확인 라우트
+app.get('/check-database', async (req, res) => {
+  try {
+    const tableCheck = await pool.query(`
+      SELECT table_name 
+      FROM information_schema.tables 
+      WHERE table_schema = 'public' AND table_type = 'BASE TABLE'
+      ORDER BY table_name
+    `);
+    
+    const stats = await pool.query(`
+      SELECT 'users' as table_name, count(*) as record_count FROM users
+      UNION ALL
+      SELECT 'clubs' as table_name, count(*) as record_count FROM clubs
+      UNION ALL
+      SELECT 'applications' as table_name, count(*) as record_count FROM applications
+      UNION ALL
+      SELECT 'assignments' as table_name, count(*) as record_count FROM assignments
+      ORDER BY table_name
+    `);
+
+    res.json({
+      success: true,
+      message: '데이터베이스 상태 정상',
+      tables: tableCheck.rows.map(row => row.table_name),
+      statistics: stats.rows
+    });
+  } catch (error) {
+    res.json({
+      success: false,
+      error: error.message,
+      message: '데이터베이스 테이블이 아직 생성되지 않았습니다. /init-database를 먼저 실행하세요.'
+    });
+  }
+});
