@@ -89,6 +89,16 @@
             from { transform: translateX(100%); opacity: 0; }
             to { transform: translateX(0); opacity: 1; }
         }
+        
+        .tab-active {
+            background-color: white;
+            color: #3b82f6;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+        }
+        
+        .tab-inactive {
+            color: #6b7280;
+        }
     </style>
 </head>
 <body class="bg-gray-50">
@@ -125,9 +135,15 @@
                 return response.json();
             },
             
+            // 인증 관련
             login: (username, password) => 
                 api.request('/login', { method: 'POST', body: { username, password } }),
+            register: (student_number, name) =>
+                api.request('/register', { method: 'POST', body: { student_number, name } }),
+            checkStudent: (student_number) =>
+                api.request(`/check-student/${student_number}`),
             
+            // 동아리 관련
             getClubs: () => api.request('/clubs'),
             getClub: (id) => api.request(`/clubs/${id}`),
             apply: (applications) => api.request('/apply', { method: 'POST', body: applications }),
@@ -137,7 +153,6 @@
             getAllApplications: () => api.request('/admin/applications'),
             assignClubs: () => api.request('/admin/assign-clubs', { method: 'POST' }),
             getAssignments: () => api.request('/admin/assignments'),
-            initDb: () => api.request('/admin/init-db', { method: 'POST' })
         };
 
         // 알림 컴포넌트
@@ -173,19 +188,31 @@
             </div>
         );
 
-        // 로그인 컴포넌트
-        const Login = ({ onLogin }) => {
-            const [credentials, setCredentials] = useState({ username: '', password: '' });
+        // 개선된 로그인/가입 컴포넌트
+        const LoginRegister = ({ onLogin }) => {
+            const [activeTab, setActiveTab] = useState('login');
             const [loading, setLoading] = useState(false);
             const [error, setError] = useState('');
+            const [notification, setNotification] = useState(null);
+            const [isAdminMode, setIsAdminMode] = useState(false);
 
-            const handleSubmit = async (e) => {
+            // 로그인 상태
+            const [loginForm, setLoginForm] = useState({ username: '', password: '' });
+            
+            // 가입 상태
+            const [registerForm, setRegisterForm] = useState({ student_number: '', name: '' });
+
+            const showNotification = (message, type = 'success') => {
+                setNotification({ message, type });
+            };
+
+            const handleLogin = async (e) => {
                 e.preventDefault();
                 setLoading(true);
                 setError('');
 
                 try {
-                    const result = await api.login(credentials.username, credentials.password);
+                    const result = await api.login(loginForm.username, loginForm.password);
                     localStorage.setItem('token', result.token);
                     localStorage.setItem('user', JSON.stringify(result.user));
                     onLogin(result.user);
@@ -196,75 +223,219 @@
                 }
             };
 
+            const handleRegister = async (e) => {
+                e.preventDefault();
+                setLoading(true);
+                setError('');
+
+                try {
+                    const result = await api.register(registerForm.student_number, registerForm.name);
+                    showNotification('가입이 완료되었습니다! 자동으로 로그인 정보가 입력됩니다.');
+                    
+                    // 로그인 탭으로 전환하고 정보 자동 입력
+                    setActiveTab('login');
+                    setLoginForm({
+                        username: registerForm.student_number,
+                        password: registerForm.student_number
+                    });
+                    
+                    // 폼 초기화
+                    setRegisterForm({ student_number: '', name: '' });
+                } catch (error) {
+                    setError(error.message);
+                } finally {
+                    setLoading(false);
+                }
+            };
+
+            const toggleAdminMode = () => {
+                setIsAdminMode(!isAdminMode);
+                setLoginForm({ username: '', password: '' });
+                setError('');
+            };
+
             return (
                 <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center">
                     <div className="max-w-md w-full bg-white rounded-xl shadow-xl p-8 bounce-in">
+                        {/* 헤더 */}
                         <div className="text-center mb-8">
-                            <i className="fas fa-users text-4xl text-blue-600 mb-4"></i>
+                            <div className="w-16 h-16 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                                <i className="fas fa-users text-2xl text-blue-600"></i>
+                            </div>
                             <h1 className="text-2xl font-bold text-gray-800">오성중학교</h1>
                             <p className="text-gray-600">동아리 편성 시스템</p>
                         </div>
 
-                        <form onSubmit={handleSubmit} className="space-y-6">
-                            <div>
-                                <label className="block text-sm font-medium text-gray-700 mb-2">
-                                    사용자 ID
-                                </label>
-                                <input
-                                    type="text"
-                                    value={credentials.username}
-                                    onChange={(e) => setCredentials({...credentials, username: e.target.value})}
-                                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                                    placeholder="학번 또는 교사 ID"
-                                    required
-                                />
+                        {/* 탭 메뉴 - 관리자 모드가 아닐 때만 표시 */}
+                        {!isAdminMode && (
+                            <div className="flex mb-6 bg-gray-100 rounded-lg p-1">
+                                <button
+                                    onClick={() => setActiveTab('login')}
+                                    className={`flex-1 py-2 px-4 rounded-md text-sm font-medium transition-all ${
+                                        activeTab === 'login' ? 'tab-active' : 'tab-inactive hover:text-gray-900'
+                                    }`}
+                                >
+                                    로그인
+                                </button>
+                                <button
+                                    onClick={() => setActiveTab('register')}
+                                    className={`flex-1 py-2 px-4 rounded-md text-sm font-medium transition-all ${
+                                        activeTab === 'register' ? 'tab-active' : 'tab-inactive hover:text-gray-900'
+                                    }`}
+                                >
+                                    가입하기
+                                </button>
                             </div>
+                        )}
 
-                            <div>
-                                <label className="block text-sm font-medium text-gray-700 mb-2">
-                                    비밀번호
-                                </label>
-                                <input
-                                    type="password"
-                                    value={credentials.password}
-                                    onChange={(e) => setCredentials({...credentials, password: e.target.value})}
-                                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                                    placeholder="비밀번호"
-                                    required
-                                />
-                            </div>
-
-                            {error && (
-                                <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg">
-                                    <i className="fas fa-exclamation-triangle mr-2"></i>
-                                    {error}
+                        {/* 로그인 폼 */}
+                        {(activeTab === 'login' || isAdminMode) && (
+                            <form onSubmit={handleLogin} className="space-y-6">
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                                        {isAdminMode ? '관리자 아이디' : '학번'}
+                                    </label>
+                                    <input
+                                        type="text"
+                                        value={loginForm.username}
+                                        onChange={(e) => setLoginForm({...loginForm, username: e.target.value})}
+                                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                        placeholder={isAdminMode ? '관리자 아이디' : '4자리 학번 (예: 1101)'}
+                                        maxLength={isAdminMode ? 20 : 4}
+                                        required
+                                    />
                                 </div>
-                            )}
 
-                            <button
-                                type="submit"
-                                disabled={loading}
-                                className="w-full bg-blue-600 text-white py-2 px-4 rounded-lg hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50 transition duration-200"
-                            >
-                                {loading ? (
-                                    <span className="flex items-center justify-center">
-                                        <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin mr-2"></div>
-                                        로그인 중...
-                                    </span>
-                                ) : (
-                                    '로그인'
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                                        비밀번호
+                                    </label>
+                                    <input
+                                        type="password"
+                                        value={loginForm.password}
+                                        onChange={(e) => setLoginForm({...loginForm, password: e.target.value})}
+                                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                        placeholder={isAdminMode ? '관리자 비밀번호' : '학번과 동일'}
+                                        required
+                                    />
+                                </div>
+
+                                {error && (
+                                    <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg">
+                                        <i className="fas fa-exclamation-triangle mr-2"></i>
+                                        {error}
+                                    </div>
                                 )}
-                            </button>
-                        </form>
 
-                        <div className="mt-6 p-4 bg-gray-50 rounded-lg">
-                            <h3 className="font-medium text-gray-700 mb-2">테스트 계정</h3>
-                            <div className="text-sm text-gray-600 space-y-1">
-                                <p><strong>관리자:</strong> admin / admin123</p>
-                                <p><strong>학생:</strong> 20251001 / student123</p>
+                                <button
+                                    type="submit"
+                                    disabled={loading}
+                                    className="w-full bg-blue-600 text-white py-2 px-4 rounded-lg hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50 transition duration-200"
+                                >
+                                    {loading ? (
+                                        <span className="flex items-center justify-center">
+                                            <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin mr-2"></div>
+                                            로그인 중...
+                                        </span>
+                                    ) : (
+                                        '로그인'
+                                    )}
+                                </button>
+                            </form>
+                        )}
+
+                        {/* 가입 폼 */}
+                        {activeTab === 'register' && !isAdminMode && (
+                            <form onSubmit={handleRegister} className="space-y-6">
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                                        학번
+                                    </label>
+                                    <input
+                                        type="text"
+                                        value={registerForm.student_number}
+                                        onChange={(e) => setRegisterForm({...registerForm, student_number: e.target.value})}
+                                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500"
+                                        placeholder="4자리 학번 (예: 1101)"
+                                        maxLength="4"
+                                        pattern="[0-9]{4}"
+                                        required
+                                    />
+                                    <p className="text-xs text-gray-500 mt-1">첫 번째 숫자: 학년, 두 번째 숫자: 반</p>
+                                </div>
+
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                                        이름
+                                    </label>
+                                    <input
+                                        type="text"
+                                        value={registerForm.name}
+                                        onChange={(e) => setRegisterForm({...registerForm, name: e.target.value})}
+                                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500"
+                                        placeholder="이름 (예: 홍길동)"
+                                        required
+                                    />
+                                </div>
+
+                                {error && (
+                                    <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg">
+                                        <i className="fas fa-exclamation-triangle mr-2"></i>
+                                        {error}
+                                    </div>
+                                )}
+
+                                <button
+                                    type="submit"
+                                    disabled={loading}
+                                    className="w-full bg-green-600 text-white py-2 px-4 rounded-lg hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500 disabled:opacity-50 transition duration-200"
+                                >
+                                    {loading ? (
+                                        <span className="flex items-center justify-center">
+                                            <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin mr-2"></div>
+                                            가입 중...
+                                        </span>
+                                    ) : (
+                                        '가입하기'
+                                    )}
+                                </button>
+                            </form>
+                        )}
+
+                        {/* 사용 안내 - 관리자 모드가 아닐 때만 표시 */}
+                        {!isAdminMode && (
+                            <div className="mt-8 p-4 bg-blue-50 rounded-lg">
+                                <h3 className="text-sm font-semibold text-blue-800 mb-2">
+                                    <i className="fas fa-info-circle mr-2"></i>사용 안내
+                                </h3>
+                                <ul className="text-xs text-blue-700 space-y-1">
+                                    <li>• 처음 사용: 학번과 이름으로 가입</li>
+                                    <li>• 로그인: 학번이 아이디, 비밀번호도 학번</li>
+                                    <li>• 동아리 3순위까지 선택 가능</li>
+                                    <li>• 신청 후 편성 결과 확인</li>
+                                </ul>
                             </div>
+                        )}
+
+                        {/* 관리자 링크 */}
+                        <div className="mt-4 text-center">
+                            <button
+                                onClick={toggleAdminMode}
+                                className="text-xs text-gray-400 hover:text-gray-600 transition-colors"
+                            >
+                                {isAdminMode ? '학생 로그인으로 돌아가기' : '관리자 로그인'}
+                            </button>
                         </div>
                     </div>
+
+                    {/* 알림 */}
+                    {notification && (
+                        <Notification
+                            message={notification.message}
+                            type={notification.type}
+                            onClose={() => setNotification(null)}
+                        />
+                    )}
                 </div>
             );
         };
@@ -291,7 +462,7 @@
                         <div className="text-right">
                             <span className={`inline-block px-2 py-1 rounded-full text-xs font-medium ${
                                 club.category === '문화예술 활동' ? 'bg-purple-100 text-purple-800' :
-                                club.category === '스포츠 활동' ? 'bg-green-100 text-green-800' :
+                                club.category === '체육 활동' ? 'bg-green-100 text-green-800' :
                                 club.category === '학술 활동' ? 'bg-blue-100 text-blue-800' :
                                 'bg-gray-100 text-gray-800'
                             }`}>
@@ -307,7 +478,7 @@
                         </div>
                         <div className="flex items-center text-sm text-gray-600">
                             <i className="fas fa-calendar-alt mr-2"></i>
-                            <span>{club.exhibition_plan}</span>
+                            <span>{club.meeting_time}</span>
                         </div>
                     </div>
 
@@ -327,6 +498,10 @@
                             ></div>
                         </div>
                     </div>
+
+                    {club.description && (
+                        <p className="text-sm text-gray-600 line-clamp-2 mb-3">{club.description}</p>
+                    )}
 
                     {isFull && (
                         <div className="bg-red-50 border border-red-200 text-red-700 px-3 py-2 rounded-md text-sm">
@@ -369,7 +544,7 @@
                                             <p><span className="font-medium">분야:</span> {club.category}</p>
                                             <p><span className="font-medium">활동 장소:</span> {club.location}</p>
                                             <p><span className="font-medium">정원:</span> {club.min_members}~{club.max_members}명</p>
-                                            <p><span className="font-medium">전시/발표:</span> {club.exhibition_plan}</p>
+                                            <p><span className="font-medium">활동 시간:</span> {club.meeting_time}</p>
                                         </div>
                                     </div>
 
@@ -393,19 +568,23 @@
                                 </div>
 
                                 <div className="space-y-4">
-                                    <div>
-                                        <h3 className="font-semibold text-gray-800 mb-2">
-                                            <i className="fas fa-bullseye mr-2"></i>동아리 목표
-                                        </h3>
-                                        <p className="text-sm text-gray-700 leading-relaxed">{club.goals}</p>
-                                    </div>
+                                    {club.goals && (
+                                        <div>
+                                            <h3 className="font-semibold text-gray-800 mb-2">
+                                                <i className="fas fa-bullseye mr-2"></i>동아리 목표
+                                            </h3>
+                                            <p className="text-sm text-gray-700 leading-relaxed">{club.goals}</p>
+                                        </div>
+                                    )}
 
-                                    <div>
-                                        <h3 className="font-semibold text-gray-800 mb-2">
-                                            <i className="fas fa-clipboard-list mr-2"></i>주요 활동
-                                        </h3>
-                                        <p className="text-sm text-gray-700 leading-relaxed">{club.activities}</p>
-                                    </div>
+                                    {club.activities && (
+                                        <div>
+                                            <h3 className="font-semibold text-gray-800 mb-2">
+                                                <i className="fas fa-clipboard-list mr-2"></i>주요 활동
+                                            </h3>
+                                            <p className="text-sm text-gray-700 leading-relaxed">{club.activities}</p>
+                                        </div>
+                                    )}
                                 </div>
                             </div>
 
@@ -414,6 +593,14 @@
                                     <i className="fas fa-info-circle mr-2"></i>동아리 소개
                                 </h3>
                                 <p className="text-sm text-gray-700 leading-relaxed">{club.description}</p>
+                                {club.requirements && (
+                                    <div className="mt-3 p-3 bg-yellow-50 rounded-lg">
+                                        <p className="text-sm text-yellow-800">
+                                            <i className="fas fa-star mr-1"></i>
+                                            <strong>권장 사항:</strong> {club.requirements}
+                                        </p>
+                                    </div>
+                                )}
                             </div>
                         </div>
                     </div>
@@ -452,9 +639,9 @@
                     // 기존 신청 내용으로 선택 상태 복원
                     const newSelectedClubs = { first: null, second: null, third: null };
                     applicationsData.forEach(app => {
-                        if (app.preference === 1) newSelectedClubs.first = app.club_id;
-                        if (app.preference === 2) newSelectedClubs.second = app.club_id;
-                        if (app.preference === 3) newSelectedClubs.third = app.club_id;
+                        if (app.preference === 1 || app.priority === 1) newSelectedClubs.first = app.club_id;
+                        if (app.preference === 2 || app.priority === 2) newSelectedClubs.second = app.club_id;
+                        if (app.preference === 3 || app.priority === 3) newSelectedClubs.third = app.club_id;
                     });
                     setSelectedClubs(newSelectedClubs);
                 } catch (error) {
@@ -524,7 +711,7 @@
                                 <div className="flex items-center space-x-4">
                                     <span className="text-sm text-gray-600">
                                         <i className="fas fa-user mr-1"></i>
-                                        {user.name} ({user.student_id})
+                                        {user.name} ({user.class_info || user.username})
                                     </span>
                                     <button 
                                         onClick={onLogout}
@@ -547,7 +734,7 @@
                                 </h2>
                                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                                     {[1, 2, 3].map(preference => {
-                                        const app = myApplications.find(a => a.preference === preference);
+                                        const app = myApplications.find(a => (a.preference || a.priority) === preference);
                                         return (
                                             <div key={preference} className="border rounded-lg p-4">
                                                 <div className="flex items-center justify-between mb-2">
@@ -708,7 +895,7 @@
             );
         };
 
-        // 관리자 대시보드
+        // 관리자 대시보드 (기존과 동일하지만 간단하게 정리)
         const AdminDashboard = ({ user, onLogout }) => {
             const [applications, setApplications] = useState([]);
             const [assignments, setAssignments] = useState([]);
@@ -752,14 +939,16 @@
             };
 
             const exportToCSV = (data, filename) => {
+                if (!data.length) return;
                 const csv = data.map(row => Object.values(row).join(',')).join('\n');
                 const header = Object.keys(data[0] || {}).join(',');
-                const blob = new Blob([header + '\n' + csv], { type: 'text/csv' });
+                const blob = new Blob([header + '\n' + csv], { type: 'text/csv;charset=utf-8;' });
                 const url = URL.createObjectURL(blob);
                 const a = document.createElement('a');
                 a.href = url;
                 a.download = filename;
                 a.click();
+                URL.revokeObjectURL(url);
             };
 
             if (loading) return <Loading />;
@@ -851,8 +1040,32 @@
                             </div>
                         </div>
 
-                        {/* 탭 네비게이션 */}
-                        <div className="bg-white rounded-lg shadow-md mb-6">
+                        {/* 관리 버튼들 */}
+                        <div className="bg-white rounded-lg shadow-md p-6 mb-6">
+                            <div className="flex flex-wrap gap-4">
+                                <button
+                                    onClick={handleAssignClubs}
+                                    className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+                                >
+                                    <i className="fas fa-magic mr-2"></i>동아리 배정 실행
+                                </button>
+                                <button
+                                    onClick={() => exportToCSV(applications, 'applications.csv')}
+                                    className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
+                                >
+                                    <i className="fas fa-download mr-2"></i>신청 현황 CSV
+                                </button>
+                                <button
+                                    onClick={() => exportToCSV(assignments, 'assignments.csv')}
+                                    className="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors"
+                                >
+                                    <i className="fas fa-download mr-2"></i>배정 결과 CSV
+                                </button>
+                            </div>
+                        </div>
+
+                        {/* 탭 및 데이터 표시 */}
+                        <div className="bg-white rounded-lg shadow-md">
                             <div className="border-b border-gray-200">
                                 <nav className="flex space-x-8 px-6">
                                     <button
@@ -863,7 +1076,7 @@
                                                 : 'border-transparent text-gray-500 hover:text-gray-700'
                                         }`}
                                     >
-                                        신청 현황
+                                        신청 현황 ({applications.length})
                                     </button>
                                     <button
                                         onClick={() => setActiveTab('assignments')}
@@ -873,142 +1086,108 @@
                                                 : 'border-transparent text-gray-500 hover:text-gray-700'
                                         }`}
                                     >
-                                        배정 결과
+                                        배정 결과 ({assignments.length})
                                     </button>
                                 </nav>
                             </div>
 
                             <div className="p-6">
-                                {activeTab === 'applications' && (
-                                    <div>
-                                        <div className="flex justify-between items-center mb-4">
-                                            <h3 className="text-lg font-semibold text-gray-800">신청 현황</h3>
-                                            <div className="space-x-2">
-                                                <button
-                                                    onClick={() => exportToCSV(applications, 'applications.csv')}
-                                                    className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700"
-                                                >
-                                                    <i className="fas fa-download mr-2"></i>CSV 내보내기
-                                                </button>
-                                                <button
-                                                    onClick={handleAssignClubs}
-                                                    className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
-                                                >
-                                                    <i className="fas fa-magic mr-2"></i>동아리 배정 실행
-                                                </button>
-                                            </div>
-                                        </div>
-                                        
-                                        <div className="overflow-x-auto">
-                                            <table className="min-w-full divide-y divide-gray-200">
-                                                <thead className="bg-gray-50">
-                                                    <tr>
-                                                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                                            학생 정보
-                                                        </th>
-                                                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                                            동아리
-                                                        </th>
-                                                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                                            지망 순위
-                                                        </th>
-                                                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                                            상태
-                                                        </th>
+                                {activeTab === 'applications' ? (
+                                    <div className="overflow-x-auto">
+                                        <table className="min-w-full divide-y divide-gray-200">
+                                            <thead className="bg-gray-50">
+                                                <tr>
+                                                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                                        학생 정보
+                                                    </th>
+                                                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                                        동아리
+                                                    </th>
+                                                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                                        지망 순위
+                                                    </th>
+                                                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                                        상태
+                                                    </th>
+                                                </tr>
+                                            </thead>
+                                            <tbody className="bg-white divide-y divide-gray-200">
+                                                {applications.map((app, index) => (
+                                                    <tr key={index}>
+                                                        <td className="px-6 py-4 whitespace-nowrap">
+                                                            <div>
+                                                                <div className="text-sm font-medium text-gray-900">
+                                                                    {app.student_name}
+                                                                </div>
+                                                                <div className="text-sm text-gray-500">
+                                                                    {app.student_id} ({app.class_info})
+                                                                </div>
+                                                            </div>
+                                                        </td>
+                                                        <td className="px-6 py-4 whitespace-nowrap">
+                                                            <div>
+                                                                <div className="text-sm font-medium text-gray-900">
+                                                                    {app.club_name}
+                                                                </div>
+                                                                <div className="text-sm text-gray-500">
+                                                                    {app.teacher}
+                                                                </div>
+                                                            </div>
+                                                        </td>
+                                                        <td className="px-6 py-4 whitespace-nowrap">
+                                                            <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
+                                                                (app.preference || app.priority) === 1 ? 'bg-red-100 text-red-800' :
+                                                                (app.preference || app.priority) === 2 ? 'bg-yellow-100 text-yellow-800' :
+                                                                'bg-green-100 text-green-800'
+                                                            }`}>
+                                                                {app.preference || app.priority}지망
+                                                            </span>
+                                                        </td>
+                                                        <td className="px-6 py-4 whitespace-nowrap">
+                                                            <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
+                                                                app.status === 'assigned' ? 'bg-green-100 text-green-800' :
+                                                                app.status === 'rejected' ? 'bg-red-100 text-red-800' :
+                                                                'bg-yellow-100 text-yellow-800'
+                                                            }`}>
+                                                                {app.status === 'assigned' ? '배정됨' : 
+                                                                 app.status === 'rejected' ? '탈락' : '대기중'}
+                                                            </span>
+                                                        </td>
                                                     </tr>
-                                                </thead>
-                                                <tbody className="bg-white divide-y divide-gray-200">
-                                                    {applications.map((app, index) => (
-                                                        <tr key={index}>
-                                                            <td className="px-6 py-4 whitespace-nowrap">
-                                                                <div>
-                                                                    <div className="text-sm font-medium text-gray-900">
-                                                                        {app.student_name}
-                                                                    </div>
-                                                                    <div className="text-sm text-gray-500">
-                                                                        {app.student_id}
-                                                                    </div>
-                                                                </div>
-                                                            </td>
-                                                            <td className="px-6 py-4 whitespace-nowrap">
-                                                                <div>
-                                                                    <div className="text-sm font-medium text-gray-900">
-                                                                        {app.club_name}
-                                                                    </div>
-                                                                    <div className="text-sm text-gray-500">
-                                                                        {app.teacher}
-                                                                    </div>
-                                                                </div>
-                                                            </td>
-                                                            <td className="px-6 py-4 whitespace-nowrap">
-                                                                <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
-                                                                    app.preference === 1 ? 'bg-red-100 text-red-800' :
-                                                                    app.preference === 2 ? 'bg-yellow-100 text-yellow-800' :
-                                                                    'bg-green-100 text-green-800'
-                                                                }`}>
-                                                                    {app.preference}지망
-                                                                </span>
-                                                            </td>
-                                                            <td className="px-6 py-4 whitespace-nowrap">
-                                                                <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
-                                                                    app.status === 'assigned' ? 'bg-green-100 text-green-800' :
-                                                                    app.status === 'rejected' ? 'bg-red-100 text-red-800' :
-                                                                    'bg-yellow-100 text-yellow-800'
-                                                                }`}>
-                                                                    {app.status === 'assigned' ? '배정됨' : 
-                                                                     app.status === 'rejected' ? '탈락' : '대기중'}
-                                                                </span>
-                                                            </td>
-                                                        </tr>
-                                                    ))}
-                                                </tbody>
-                                            </table>
-                                        </div>
+                                                ))}
+                                            </tbody>
+                                        </table>
                                     </div>
-                                )}
-
-                                {activeTab === 'assignments' && (
-                                    <div>
-                                        <div className="flex justify-between items-center mb-4">
-                                            <h3 className="text-lg font-semibold text-gray-800">배정 결과</h3>
-                                            <button
-                                                onClick={() => exportToCSV(assignments, 'assignments.csv')}
-                                                className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700"
-                                            >
-                                                <i className="fas fa-download mr-2"></i>CSV 내보내기
-                                            </button>
-                                        </div>
-                                        
-                                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                                            {assignments.map((assignment, index) => (
-                                                <div key={index} className="bg-gray-50 rounded-lg p-4">
-                                                    <div className="flex justify-between items-start mb-3">
-                                                        <h4 className="font-semibold text-gray-800">{assignment.club_name}</h4>
-                                                        <span className={`text-sm px-2 py-1 rounded-full ${
-                                                            assignment.assigned_count >= assignment.max_members 
-                                                                ? 'bg-red-100 text-red-800' 
-                                                                : 'bg-green-100 text-green-800'
-                                                        }`}>
-                                                            {assignment.assigned_count}/{assignment.max_members}명
-                                                        </span>
-                                                    </div>
-                                                    <p className="text-sm text-gray-600 mb-2">
-                                                        <i className="fas fa-user-tie mr-1"></i>
-                                                        {assignment.teacher}
-                                                    </p>
-                                                    <p className="text-sm text-gray-600 mb-3">
-                                                        <i className="fas fa-map-marker-alt mr-1"></i>
-                                                        {assignment.location}
-                                                    </p>
-                                                    {assignment.students && (
-                                                        <div>
-                                                            <p className="text-xs text-gray-500 mb-1">배정된 학생:</p>
-                                                            <p className="text-xs text-gray-700">{assignment.students}</p>
-                                                        </div>
-                                                    )}
+                                ) : (
+                                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                                        {assignments.map((assignment, index) => (
+                                            <div key={index} className="bg-gray-50 rounded-lg p-4">
+                                                <div className="flex justify-between items-start mb-3">
+                                                    <h4 className="font-semibold text-gray-800">{assignment.club_name}</h4>
+                                                    <span className={`text-sm px-2 py-1 rounded-full ${
+                                                        assignment.assigned_count >= assignment.max_members 
+                                                            ? 'bg-red-100 text-red-800' 
+                                                            : 'bg-green-100 text-green-800'
+                                                    }`}>
+                                                        {assignment.assigned_count}/{assignment.max_members}명
+                                                    </span>
                                                 </div>
-                                            ))}
-                                        </div>
+                                                <p className="text-sm text-gray-600 mb-2">
+                                                    <i className="fas fa-user-tie mr-1"></i>
+                                                    {assignment.teacher}
+                                                </p>
+                                                <p className="text-sm text-gray-600 mb-3">
+                                                    <i className="fas fa-map-marker-alt mr-1"></i>
+                                                    {assignment.location}
+                                                </p>
+                                                {assignment.students && (
+                                                    <div>
+                                                        <p className="text-xs text-gray-500 mb-1">배정된 학생:</p>
+                                                        <p className="text-xs text-gray-700">{assignment.students}</p>
+                                                    </div>
+                                                )}
+                                            </div>
+                                        ))}
                                     </div>
                                 )}
                             </div>
@@ -1060,7 +1239,7 @@
             if (loading) return <Loading />;
 
             if (!user) {
-                return <Login onLogin={handleLogin} />;
+                return <LoginRegister onLogin={handleLogin} />;
             }
 
             if (user.role === 'admin') {
