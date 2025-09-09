@@ -1,0 +1,46 @@
+{
+  "name": "osung-club-management",
+  "version": "1.0.0",
+  "description": "오성중학교 동아리 편성 및 관리 시스템",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "nodemon server.js",
+    "build": "npm install",
+    "seed": "node database/seed.js",
+    "setup": "node scripts/setup.js",
+    "db:init": "psql $DATABASE_URL -f database/init.sql",
+    "db:seed": "node database/seed.js",
+    "db:reset": "npm run db:init && npm run db:seed",
+    "test": "echo \"No tests specified\" && exit 0",
+    "lint": "echo \"No linting configured\" && exit 0",
+    "deploy": "git push origin main",
+    "health": "curl -f http://localhost:3000/api/health || exit 1"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "cors": "^2.8.5",
+    "bcryptjs": "^2.4.3",
+    "jsonwebtoken": "^9.0.2",
+    "pg": "^8.11.3",
+    "multer": "^1.4.5-lts.1",
+    "express-rate-limit": "^7.1.5",
+    "helmet": "^7.1.0",
+    "dotenv": "^16.3.1"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.2"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "keywords": [
+    "school",
+    "club",
+    "management",
+    "middle-school",
+    "오성중학교"
+  ],
+  "author": "Claude AI",
+  "license": "MIT"
+}

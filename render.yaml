@@ -1,0 +1,105 @@
+# Render.com 배포 설정 파일
+# 오성중학교 동아리 편성 시스템
+
+services:
+  # 웹 서비스 (Node.js + Express + React)
+  - type: web
+    name: osung-club-system
+    env: node
+    plan: free  # 무료 플랜 사용
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: JWT_SECRET
+        generateValue: true  # 자동으로 안전한 랜덤 값 생성
+      - key: BCRYPT_SALT_ROUNDS
+        value: 10
+      - key: MAX_FILE_SIZE
+        value: 10
+      - key: RATE_LIMIT_WINDOW_MS
+        value: 900000
+      - key: RATE_LIMIT_MAX_REQUESTS
+        value: 100
+    # 자동 배포 설정
+    autoDeploy: true
+    branch: main
+    
+  # PostgreSQL 데이터베이스
+databases:
+  - name: osung-club-db
+    databaseName: osung_club_db
+    user: osung_admin
+    plan: free  # 무료 플랜 (1GB 스토리지)
+    
+# 환경 변수 그룹
+envVarGroups:
+  - name: app-config
+    envVars:
+      - key: LOG_LEVEL
+        value: info
+      - key: SESSION_SECRET
+        generateValue: true
+        
+# 빌드 및 배포 후크
+hooks:
+  # 데이터베이스 마이그레이션 및 시드 실행
+  postDeploy:
+    - name: database-setup
+      command: |
+        if [ "$FIRST_DEPLOY" = "true" ]; then
+          echo "첫 배포: 데이터베이스 초기화 중..."
+          psql $DATABASE_URL -f database/init.sql
+          psql $DATABASE_URL -f database/seed.sql
+          echo "데이터베이스 초기화 완료"
+        else
+          echo "업데이트 배포: 마이그레이션 확인 중..."
+          # 향후 스키마 변경 시 마이그레이션 스크립트 실행
+        fi
+        
+# 정적 파일 설정
+staticPublishPath: ./public
+
+# 헬스체크 설정
+healthCheck:
+  path: /api/health
+  intervalSeconds: 30
+  timeoutSeconds: 10
+  
+# 로그 설정
+logging:
+  level: info
+  format: json
+  
+# 리소스 제한 (무료 플랜)
+resources:
+  cpu: 0.1  # 100m CPU
+  memory: 512Mi  # 512MB RAM
+  
+# 스케일링 설정
+scaling:
+  minInstances: 1
+  maxInstances: 1  # 무료 플랜은 1개 인스턴스만 지원
+  
+# 네트워크 설정
+networking:
+  allowedOrigins:
+    - "*"  # CORS 설정은 애플리케이션에서 처리
+    
+# 백업 설정 (데이터베이스)
+backup:
+  enabled: true
+  retention: 7  # 7일간 백업 보관
+  
+# 모니터링 설정
+monitoring:
+  enabled: true
+  alerts:
+    - type: cpu
+      threshold: 80
+    - type: memory  
+      threshold: 80
+    - type: disk
+      threshold: 90
