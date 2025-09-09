@@ -109,7 +109,75 @@ app.get('/api/info', (req, res) => {
   });
 });
 
-// 사용자 인증
+// 학생 회원가입 API
+app.post('/api/register', async (req, res) => {
+  try {
+    const { student_number, name } = req.body;
+    
+    // 입력 검증
+    if (!student_number || !name) {
+      return res.status(400).json({ error: '학번과 이름을 입력해주세요' });
+    }
+    
+    // 학번 형식 검증 (4자리 숫자)
+    if (!/^\d{4}$/.test(student_number)) {
+      return res.status(400).json({ error: '학번은 4자리 숫자로 입력해주세요 (예: 1101)' });
+    }
+    
+    // 이름 검증 (한글 2-4글자)
+    if (!/^[가-힣]{2,4}$/.test(name)) {
+      return res.status(400).json({ error: '이름은 한글 2-4글자로 입력해주세요' });
+    }
+    
+    // 중복 확인
+    const existingUser = await pool.query('SELECT id FROM users WHERE username = $1', [student_number]);
+    if (existingUser.rows.length > 0) {
+      return res.status(400).json({ error: '이미 가입된 학번입니다' });
+    }
+    
+    // 비밀번호는 학번과 동일하게 설정
+    const password = await bcrypt.hash(student_number, 10);
+    
+    // 학번에서 학년/반 자동 추출
+    const grade = student_number.charAt(0);
+    const classNum = student_number.charAt(1);
+    const autoClassInfo = `${grade}학년 ${classNum}반`;
+    
+    // 사용자 생성
+    await pool.query(
+      'INSERT INTO users (username, password, name, role, class_info, student_id) VALUES ($1, $2, $3, $4, $5, $6)',
+      [student_number, password, name, 'student', autoClassInfo, student_number]
+    );
+    
+    res.json({ 
+      success: true,
+      message: '가입이 완료되었습니다!',
+      loginInfo: {
+        username: student_number,
+        password: student_number,
+        classInfo: autoClassInfo,
+        note: '로그인 시 아이디와 비밀번호 모두 학번을 사용하세요'
+      }
+    });
+    
+  } catch (error) {
+    console.error('Registration error:', error);
+    res.status(500).json({ error: '가입 처리 중 오류가 발생했습니다' });
+  }
+});
+
+// 학번 중복 확인 API
+app.get('/api/check-student/:student_number', async (req, res) => {
+  try {
+    const { student_number } = req.params;
+    const result = await pool.query('SELECT id FROM users WHERE username = $1', [student_number]);
+    res.json({ exists: result.rows.length > 0 });
+  } catch (error) {
+    res.status(500).json({ error: '확인 중 오류가 발생했습니다' });
+  }
+});
+
+// 사용자 인증 (수정됨 - student_id 필드 문제 해결)
 app.post('/api/login', async (req, res) => {
   try {
     const { username, password } = req.body;
@@ -133,7 +201,7 @@ app.post('/api/login', async (req, res) => {
         id: user.id, 
         username: user.username, 
         role: user.role,
-        student_id: user.student_id 
+        student_id: user.student_id || user.username  // student_id 필드 호환성
       },
       process.env.JWT_SECRET || 'your-secret-key',
       { expiresIn: '24h' }
@@ -146,7 +214,8 @@ app.post('/api/login', async (req, res) => {
         username: user.username,
         name: user.name,
         role: user.role,
-        student_id: user.student_id
+        student_id: user.student_id || user.username,
+        class_info: user.class_info
       }
     });
   } catch (error) {
@@ -155,7 +224,7 @@ app.post('/api/login', async (req, res) => {
   }
 });
 
-// 동아리 목록 조회
+// 동아리 목록 조회 (수정됨 - 스키마 호환성)
 app.get('/api/clubs', async (req, res) => {
   try {
     const query = `
@@ -176,7 +245,19 @@ app.get('/api/clubs', async (req, res) => {
     `;
     
     const result = await pool.query(query);
-    res.json(result.rows);
+    
+    // 호환성을 위해 필드명 매핑
+    const mappedResults = result.rows.map(club => ({
+      ...club,
+      max_members: club.max_capacity || club.max_members || 30,
+      min_members: club.min_members || 5,
+      category: club.category || '일반 활동',
+      activities: club.activities || club.description || '다양한 활동',
+      goals: club.goals || club.requirements || '학생 역량 개발',
+      exhibition_plan: club.meeting_time || '학기말 발표'
+    }));
+    
+    res.json(mappedResults);
   } catch (error) {
     console.error('Error fetching clubs:', error);
     res.status(500).json({ error: '동아리 목록을 불러오는데 실패했습니다' });
@@ -201,26 +282,26 @@ app.get('/api/clubs/:id', async (req, res) => {
   }
 });
 
-// 학생 동아리 신청
+// 학생 동아리 신청 (수정됨 - user_id 기반으로 변경)
 app.post('/api/apply', authenticateToken, async (req, res) => {
   try {
     const { first_choice, second_choice, third_choice } = req.body;
-    const student_id = req.user.student_id;
+    const user_id = req.user.id;  // student_id 대신 id 사용
     
     // 기존 신청 삭제
-    await pool.query('DELETE FROM applications WHERE student_id = $1', [student_id]);
+    await pool.query('DELETE FROM applications WHERE user_id = $1', [user_id]);
     
     // 새로운 신청 추가
     const applications = [
-      { club_id: first_choice, preference: 1 },
-      { club_id: second_choice, preference: 2 },
-      { club_id: third_choice, preference: 3 }
+      { club_id: first_choice, priority: 1 },
+      { club_id: second_choice, priority: 2 },
+      { club_id: third_choice, priority: 3 }
     ].filter(app => app.club_id);
     
     for (const app of applications) {
       await pool.query(
-        'INSERT INTO applications (student_id, club_id, preference, status) VALUES ($1, $2, $3, $4)',
-        [student_id, app.club_id, app.preference, 'pending']
+        'INSERT INTO applications (user_id, club_id, priority, status) VALUES ($1, $2, $3, $4)',
+        [user_id, app.club_id, app.priority, 'pending']
       );
     }
     
@@ -231,19 +312,19 @@ app.post('/api/apply', authenticateToken, async (req, res) => {
   }
 });
 
-// 학생 신청 현황 조회
+// 학생 신청 현황 조회 (수정됨)
 app.get('/api/my-applications', authenticateToken, async (req, res) => {
   try {
-    const student_id = req.user.student_id;
+    const user_id = req.user.id;
     const query = `
-      SELECT a.*, c.name as club_name, c.teacher, c.location
+      SELECT a.*, c.name as club_name, c.teacher, c.location, a.priority as preference
       FROM applications a
       JOIN clubs c ON a.club_id = c.id
-      WHERE a.student_id = $1
-      ORDER BY a.preference
+      WHERE a.user_id = $1
+      ORDER BY a.priority
     `;
     
-    const result = await pool.query(query, [student_id]);
+    const result = await pool.query(query, [user_id]);
     res.json(result.rows);
   } catch (error) {
     console.error('Error fetching applications:', error);
@@ -251,21 +332,23 @@ app.get('/api/my-applications', authenticateToken, async (req, res) => {
   }
 });
 
-// 관리자: 모든 신청 현황
+// 관리자: 모든 신청 현황 (수정됨)
 app.get('/api/admin/applications', authenticateToken, requireAdmin, async (req, res) => {
   try {
     const query = `
       SELECT 
         a.*,
         u.name as student_name,
-        u.student_id,
+        u.username as student_id,
+        u.class_info,
         c.name as club_name,
         c.teacher,
-        c.max_members
+        c.max_capacity as max_members,
+        a.priority as preference
       FROM applications a
-      JOIN users u ON a.student_id = u.student_id
+      JOIN users u ON a.user_id = u.id
       JOIN clubs c ON a.club_id = c.id
-      ORDER BY c.name, a.preference, u.name
+      ORDER BY c.name, a.priority, u.name
     `;
     
     const result = await pool.query(query);
@@ -276,7 +359,7 @@ app.get('/api/admin/applications', authenticateToken, requireAdmin, async (req, 
   }
 });
 
-// 관리자: 동아리 배정 실행
+// 관리자: 동아리 배정 실행 (수정됨)
 app.post('/api/admin/assign-clubs', authenticateToken, requireAdmin, async (req, res) => {
   const client = await pool.connect();
   
@@ -287,27 +370,27 @@ app.post('/api/admin/assign-clubs', authenticateToken, requireAdmin, async (req,
     await client.query("UPDATE applications SET status = 'pending'");
     
     // 1지망부터 3지망까지 순차적으로 배정
-    for (let preference = 1; preference <= 3; preference++) {
+    for (let priority = 1; priority <= 3; priority++) {
       const applications = await client.query(`
-        SELECT a.*, c.max_members,
+        SELECT a.*, c.max_capacity as max_members,
           (SELECT COUNT(*) FROM applications a2 WHERE a2.club_id = a.club_id AND a2.status = 'assigned') as current_assigned
         FROM applications a
         JOIN clubs c ON a.club_id = c.id
-        WHERE a.preference = $1 AND a.status = 'pending'
-        ORDER BY RANDOM() -- 동점자 처리를 위한 랜덤 정렬
-      `, [preference]);
+        WHERE a.priority = $1 AND a.status = 'pending'
+        ORDER BY RANDOM()
+      `, [priority]);
       
       for (const app of applications.rows) {
         if (app.current_assigned < app.max_members) {
           await client.query(
-            "UPDATE applications SET status = 'assigned' WHERE student_id = $1 AND club_id = $2",
-            [app.student_id, app.club_id]
+            "UPDATE applications SET status = 'assigned' WHERE user_id = $1 AND club_id = $2",
+            [app.user_id, app.club_id]
           );
           
           // 해당 학생의 다른 지망 신청들을 rejected로 변경
           await client.query(
-            "UPDATE applications SET status = 'rejected' WHERE student_id = $1 AND club_id != $2",
-            [app.student_id, app.club_id]
+            "UPDATE applications SET status = 'rejected' WHERE user_id = $1 AND club_id != $2",
+            [app.user_id, app.club_id]
           );
         }
       }
@@ -324,7 +407,7 @@ app.post('/api/admin/assign-clubs', authenticateToken, requireAdmin, async (req,
   }
 });
 
-// 관리자: 배정 결과 조회
+// 관리자: 배정 결과 조회 (수정됨)
 app.get('/api/admin/assignments', authenticateToken, requireAdmin, async (req, res) => {
   try {
     const query = `
@@ -332,13 +415,13 @@ app.get('/api/admin/assignments', authenticateToken, requireAdmin, async (req, r
         c.name as club_name,
         c.teacher,
         c.location,
-        c.max_members,
-        COUNT(a.student_id) as assigned_count,
-        string_agg(u.name || ' (' || u.student_id || ')', ', ' ORDER BY u.name) as students
+        c.max_capacity as max_members,
+        COUNT(a.user_id) as assigned_count,
+        string_agg(u.name || ' (' || u.username || ')', ', ' ORDER BY u.name) as students
       FROM clubs c
       LEFT JOIN applications a ON c.id = a.club_id AND a.status = 'assigned'
-      LEFT JOIN users u ON a.student_id = u.student_id
-      GROUP BY c.id, c.name, c.teacher, c.location, c.max_members
+      LEFT JOIN users u ON a.user_id = u.id
+      GROUP BY c.id, c.name, c.teacher, c.location, c.max_capacity
       ORDER BY c.name
     `;
     
@@ -350,67 +433,8 @@ app.get('/api/admin/assignments', authenticateToken, requireAdmin, async (req, r
   }
 });
 
-// 데이터베이스 초기화 엔드포인트 (개발용)
-app.post('/api/admin/init-db', async (req, res) => {
-  try {
-    const initSql = `
-      -- 기존 테이블 삭제
-      DROP TABLE IF EXISTS applications CASCADE;
-      DROP TABLE IF EXISTS clubs CASCADE;
-      DROP TABLE IF EXISTS users CASCADE;
-      
-      -- 사용자 테이블
-      CREATE TABLE users (
-        id SERIAL PRIMARY KEY,
-        username VARCHAR(50) UNIQUE NOT NULL,
-        password TEXT NOT NULL,
-        name VARCHAR(100) NOT NULL,
-        student_id VARCHAR(20) UNIQUE,
-        role VARCHAR(20) DEFAULT 'student',
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-      );
-      
-      -- 동아리 테이블
-      CREATE TABLE clubs (
-        id SERIAL PRIMARY KEY,
-        name VARCHAR(100) NOT NULL,
-        teacher VARCHAR(50) NOT NULL,
-        category VARCHAR(50) NOT NULL,
-        location VARCHAR(50) NOT NULL,
-        max_members INTEGER DEFAULT 15,
-        min_members INTEGER DEFAULT 5,
-        description TEXT,
-        activities TEXT,
-        goals TEXT,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-      );
-      
-      -- 신청 테이블
-      CREATE TABLE applications (
-        id SERIAL PRIMARY KEY,
-        student_id VARCHAR(20) NOT NULL,
-        club_id INTEGER REFERENCES clubs(id) ON DELETE CASCADE,
-        preference INTEGER NOT NULL CHECK (preference IN (1, 2, 3)),
-        status VARCHAR(20) DEFAULT 'pending' CHECK (status IN ('pending', 'assigned', 'rejected')),
-        applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-      );
-      
-      -- 인덱스 생성
-      CREATE INDEX idx_applications_student_id ON applications(student_id);
-      CREATE INDEX idx_applications_club_id ON applications(club_id);
-      CREATE INDEX idx_applications_status ON applications(status);
-    `;
-    
-    await pool.query(initSql);
-    res.json({ message: '데이터베이스가 초기화되었습니다' });
-  } catch (error) {
-    console.error('Database initialization error:', error);
-    res.status(500).json({ error: '데이터베이스 초기화에 실패했습니다' });
-  }
-});
-
 // ========================================
-// 데이터베이스 자동 초기화 기능 (중요: catch-all 라우트 이전에 위치!)
+// 데이터베이스 자동 초기화 기능 (수정됨)
 // ========================================
 
 // 데이터베이스 초기화 라우트
@@ -418,22 +442,28 @@ app.get('/init-database', async (req, res) => {
   try {
     console.log('🚀 데이터베이스 초기화 시작...');
     
-    // 1. 테이블 생성 (IF NOT EXISTS로 중복 생성 방지)
+    // 1. 테이블 생성 (수정된 스키마)
     const createTablesSQL = `
-      -- 사용자 테이블 생성
-      CREATE TABLE IF NOT EXISTS users (
+      -- 기존 테이블 삭제 후 재생성
+      DROP TABLE IF EXISTS applications CASCADE;
+      DROP TABLE IF EXISTS assignments CASCADE;
+      DROP TABLE IF EXISTS clubs CASCADE;
+      DROP TABLE IF EXISTS users CASCADE;
+
+      -- 사용자 테이블 생성 (수정됨)
+      CREATE TABLE users (
           id SERIAL PRIMARY KEY,
           username VARCHAR(50) UNIQUE NOT NULL,
           password VARCHAR(255) NOT NULL,
           name VARCHAR(100) NOT NULL,
           role VARCHAR(20) DEFAULT 'student',
           class_info VARCHAR(20),
-          student_number VARCHAR(20),
+          student_id VARCHAR(20),
           created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
 
-      -- 동아리 테이블 생성
-      CREATE TABLE IF NOT EXISTS clubs (
+      -- 동아리 테이블 생성 (수정됨)
+      CREATE TABLE clubs (
           id SERIAL PRIMARY KEY,
           name VARCHAR(100) NOT NULL,
           teacher VARCHAR(100) NOT NULL,
@@ -442,11 +472,15 @@ app.get('/init-database', async (req, res) => {
           requirements TEXT,
           location VARCHAR(100),
           meeting_time VARCHAR(100),
+          category VARCHAR(50) DEFAULT '일반 활동',
+          min_members INTEGER DEFAULT 5,
+          activities TEXT,
+          goals TEXT,
           created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
 
-      -- 동아리 신청 테이블 생성
-      CREATE TABLE IF NOT EXISTS applications (
+      -- 동아리 신청 테이블 생성 (수정됨)
+      CREATE TABLE applications (
           id SERIAL PRIMARY KEY,
           user_id INTEGER REFERENCES users(id),
           club_id INTEGER REFERENCES clubs(id),
@@ -457,7 +491,7 @@ app.get('/init-database', async (req, res) => {
       );
 
       -- 최종 배정 테이블 생성
-      CREATE TABLE IF NOT EXISTS assignments (
+      CREATE TABLE assignments (
           id SERIAL PRIMARY KEY,
           user_id INTEGER REFERENCES users(id),
           club_id INTEGER REFERENCES clubs(id),
@@ -466,69 +500,42 @@ app.get('/init-database', async (req, res) => {
       );
 
       -- 인덱스 생성
-      CREATE INDEX IF NOT EXISTS idx_applications_user_id ON applications(user_id);
-      CREATE INDEX IF NOT EXISTS idx_applications_club_id ON applications(club_id);
-      CREATE INDEX IF NOT EXISTS idx_assignments_user_id ON assignments(user_id);
-      CREATE INDEX IF NOT EXISTS idx_assignments_club_id ON assignments(club_id);
+      CREATE INDEX idx_applications_user_id ON applications(user_id);
+      CREATE INDEX idx_applications_club_id ON applications(club_id);
+      CREATE INDEX idx_assignments_user_id ON assignments(user_id);
+      CREATE INDEX idx_assignments_club_id ON assignments(club_id);
     `;
 
     await pool.query(createTablesSQL);
     console.log('✅ 테이블 생성 완료');
 
-    // 2. 기본 사용자 데이터 생성
+    // 2. 관리자 계정만 생성 (테스트 학생 계정 제거)
     const adminPassword = await bcrypt.hash('admin123', 10);
-    const studentPassword = await bcrypt.hash('student123', 10);
 
-    // 관리자 계정 확인 및 생성
-    const adminCheck = await pool.query('SELECT id FROM users WHERE username = $1', ['admin']);
-    if (adminCheck.rows.length === 0) {
-      await pool.query(
-        'INSERT INTO users (username, password, name, role) VALUES ($1, $2, $3, $4)',
-        ['admin', adminPassword, '시스템 관리자', 'admin']
-      );
-      console.log('✅ 관리자 계정 생성 완료');
-    }
+    // 관리자 계정 생성
+    await pool.query(
+      'INSERT INTO users (username, password, name, role) VALUES ($1, $2, $3, $4)',
+      ['admin', adminPassword, '시스템 관리자', 'admin']
+    );
+    console.log('✅ 관리자 계정 생성 완료');
 
-    // 테스트 학생 계정들 생성
-    const students = [
-      ['20251001', '김학생', '1학년 1반', '20251001'],
-      ['20251002', '이학생', '1학년 2반', '20251002'],
-      ['20251003', '박학생', '2학년 1반', '20251003'],
-      ['20251004', '최학생', '2학년 2반', '20251004'],
-      ['20251005', '정학생', '3학년 1반', '20251005']
-    ];
-
-    for (const [username, name, classInfo, studentNumber] of students) {
-      const studentCheck = await pool.query('SELECT id FROM users WHERE username = $1', [username]);
-      if (studentCheck.rows.length === 0) {
-        await pool.query(
-          'INSERT INTO users (username, password, name, role, class_info, student_number) VALUES ($1, $2, $3, $4, $5, $6)',
-          [username, studentPassword, name, 'student', classInfo, studentNumber]
-        );
-      }
-    }
-    console.log('✅ 학생 계정 생성 완료');
-
-    // 3. 동아리 데이터 생성
+    // 3. 동아리 데이터 생성 (더 현실적인 데이터)
     const clubs = [
-      ['축구부', '김체육', 25, '축구를 통한 체력 증진과 팀워크 향상', '운동을 좋아하는 학생', '운동장', '월/수/금 4교시 후'],
-      ['과학탐구부', '이과학', 20, '다양한 과학 실험과 탐구 활동', '과학에 관심이 많은 학생', '과학실', '화/목 4교시 후'],
-      ['컴퓨터부', '박정보', 15, '프로그래밍과 컴퓨터 활용 능력 향상', '컴퓨터에 관심이 있는 학생', '컴퓨터실', '월/수 4교시 후'],
-      ['미술부', '최미술', 18, '다양한 미술 기법 학습과 작품 활동', '그림 그리기를 좋아하는 학생', '미술실', '화/금 4교시 후'],
-      ['음악부', '한음악', 22, '악기 연주와 합창 활동', '음악을 사랑하는 학생', '음악실', '월/목 4교시 후'],
-      ['독서부', '정독서', 30, '독서 토론과 독후감 작성 활동', '책 읽기를 좋아하는 학생', '도서관', '수/금 4교시 후'],
-      ['영어회화부', '김영어', 20, '원어민과 함께하는 영어회화 연습', '영어 회화 실력 향상을 원하는 학생', '영어교실', '화/목 4교시 후'],
-      ['댄스부', '이댄스', 16, '다양한 장르의 댄스 배우기', '춤에 관심이 많은 학생', '체육관', '월/수/금 4교시 후']
+      ['축구부', '김체육', 25, '축구를 통한 체력 증진과 팀워크 향상', '운동을 좋아하는 학생', '운동장', '월/수/금 4교시 후', '체육 활동', 5, '축구 경기, 체력 훈련, 팀워크 활동', '전국 중학교 축구 대회 참가'],
+      ['과학탐구부', '이과학', 20, '다양한 과학 실험과 탐구 활동', '과학에 관심이 많은 학생', '과학실', '화/목 4교시 후', '학술 활동', 8, '실험 활동, 과학 프로젝트, 과학 전시회 준비', '과학 경진대회 참가 및 수상'],
+      ['컴퓨터부', '박정보', 15, '프로그래밍과 컴퓨터 활용 능력 향상', '컴퓨터에 관심이 있는 학생', '컴퓨터실', '월/수 4교시 후', '학술 활동', 6, '프로그래밍 학습, 웹사이트 제작, 앱 개발', '학교 홈페이지 제작 및 관리'],
+      ['미술부', '최미술', 18, '다양한 미술 기법 학습과 작품 활동', '그림 그리기를 좋아하는 학생', '미술실', '화/금 4교시 후', '문화예술 활동', 7, '수채화, 유화, 조소, 디자인', '학교 미술 전시회 개최'],
+      ['음악부', '한음악', 22, '악기 연주와 합창 활동', '음악을 사랑하는 학생', '음악실', '월/목 4교시 후', '문화예술 활동', 10, '합창, 기악 연주, 음악 이론 학습', '학교 음악회 및 지역 행사 참여'],
+      ['독서부', '정독서', 30, '독서 토론과 독후감 작성 활동', '책 읽기를 좋아하는 학생', '도서관', '수/금 4교시 후', '학술 활동', 8, '독서 토론, 독후감 작성, 작가와의 만남', '교내 독서 경연대회 개최'],
+      ['영어회화부', '김영어', 20, '원어민과 함께하는 영어회화 연습', '영어 회화 실력 향상을 원하는 학생', '영어교실', '화/목 4교시 후', '학술 활동', 10, '영어 토론, 영어 연극, 원어민과 대화', '영어 말하기 대회 참가'],
+      ['댄스부', '이댄스', 16, '다양한 장르의 댄스 배우기', '춤에 관심이 많은 학생', '체육관', '월/수/금 4교시 후', '문화예술 활동', 8, 'K-POP 댄스, 현대무용, 안무 창작', '학교 축제 공연 및 댄스 경연대회']
     ];
 
-    for (const [name, teacher, capacity, description, requirements, location, time] of clubs) {
-      const clubCheck = await pool.query('SELECT id FROM clubs WHERE name = $1', [name]);
-      if (clubCheck.rows.length === 0) {
-        await pool.query(
-          'INSERT INTO clubs (name, teacher, max_capacity, description, requirements, location, meeting_time) VALUES ($1, $2, $3, $4, $5, $6, $7)',
-          [name, teacher, capacity, description, requirements, location, time]
-        );
-      }
+    for (const [name, teacher, maxCapacity, description, requirements, location, meetingTime, category, minMembers, activities, goals] of clubs) {
+      await pool.query(
+        'INSERT INTO clubs (name, teacher, max_capacity, description, requirements, location, meeting_time, category, min_members, activities, goals) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)',
+        [name, teacher, maxCapacity, description, requirements, location, meetingTime, category, minMembers, activities, goals]
+      );
     }
     console.log('✅ 동아리 데이터 생성 완료');
 
@@ -546,27 +553,13 @@ app.get('/init-database', async (req, res) => {
 
     console.log('📊 데이터베이스 통계:', stats.rows);
 
-    // 5. 성공 응답
+    // 5. 성공 응답 (테스트 계정 정보 제거)
     res.json({
       success: true,
       message: '🎉 오성중학교 동아리 시스템 데이터베이스 초기화가 완료되었습니다!',
       statistics: stats.rows,
-      loginInfo: {
-        admin: {
-          username: 'admin',
-          password: 'admin123',
-          description: '관리자 계정 - 동아리 편성 관리'
-        },
-        students: [
-          { username: '20251001', password: 'student123', name: '김학생', class: '1학년 1반' },
-          { username: '20251002', password: 'student123', name: '이학생', class: '1학년 2반' },
-          { username: '20251003', password: 'student123', name: '박학생', class: '2학년 1반' },
-          { username: '20251004', password: 'student123', name: '최학생', class: '2학년 2반' },
-          { username: '20251005', password: 'student123', name: '정학생', class: '3학년 1반' }
-        ]
-      },
       clubsCreated: clubs.length,
-      nextStep: '메인 페이지로 돌아가서 로그인하세요!'
+      nextStep: '학생은 학번과 이름으로 가입 후 동아리를 신청하세요!'
     });
 
   } catch (error) {
