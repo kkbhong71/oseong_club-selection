@@ -1,0 +1,1077 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>오성중학교 동아리 편성 시스템</title>
+    
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- React & ReactDOM CDN -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    
+    <!-- Babel Standalone (JSX 변환용) -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    
+    <!-- Chart.js CDN (통계용) -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    
+    <!-- Font Awesome (아이콘) -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    
+    <!-- 커스텀 스타일 -->
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@300;400;500;700&display=swap');
+        
+        body {
+            font-family: 'Noto Sans KR', sans-serif;
+        }
+        
+        .loading-spinner {
+            border: 4px solid #f3f4f6;
+            border-top: 4px solid #3b82f6;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+        }
+        
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        
+        .fade-in {
+            animation: fadeIn 0.5s ease-in;
+        }
+        
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(20px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        
+        .bounce-in {
+            animation: bounceIn 0.6s ease-out;
+        }
+        
+        @keyframes bounceIn {
+            0% { transform: scale(0.3); opacity: 0; }
+            50% { transform: scale(1.05); }
+            70% { transform: scale(0.9); }
+            100% { transform: scale(1); opacity: 1; }
+        }
+        
+        .club-card {
+            transition: all 0.3s ease;
+            cursor: pointer;
+        }
+        
+        .club-card:hover {
+            transform: translateY(-4px);
+            box-shadow: 0 10px 25px rgba(0,0,0,0.1);
+        }
+        
+        .progress-bar {
+            transition: width 0.5s ease-in-out;
+        }
+        
+        .modal-backdrop {
+            backdrop-filter: blur(5px);
+        }
+        
+        .notification {
+            animation: slideInRight 0.5s ease-out;
+        }
+        
+        @keyframes slideInRight {
+            from { transform: translateX(100%); opacity: 0; }
+            to { transform: translateX(0); opacity: 1; }
+        }
+    </style>
+</head>
+<body class="bg-gray-50">
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef } = React;
+
+        // API 유틸리티
+        const api = {
+            baseURL: window.location.origin,
+            
+            async request(endpoint, options = {}) {
+                const token = localStorage.getItem('token');
+                const config = {
+                    headers: {
+                        'Content-Type': 'application/json',
+                        ...(token && { Authorization: `Bearer ${token}` })
+                    },
+                    ...options
+                };
+                
+                if (config.body && typeof config.body === 'object') {
+                    config.body = JSON.stringify(config.body);
+                }
+                
+                const response = await fetch(`${this.baseURL}/api${endpoint}`, config);
+                
+                if (!response.ok) {
+                    const error = await response.json().catch(() => ({}));
+                    throw new Error(error.error || '요청 처리 중 오류가 발생했습니다');
+                }
+                
+                return response.json();
+            },
+            
+            login: (username, password) => 
+                api.request('/login', { method: 'POST', body: { username, password } }),
+            
+            getClubs: () => api.request('/clubs'),
+            getClub: (id) => api.request(`/clubs/${id}`),
+            apply: (applications) => api.request('/apply', { method: 'POST', body: applications }),
+            getMyApplications: () => api.request('/my-applications'),
+            
+            // 관리자 API
+            getAllApplications: () => api.request('/admin/applications'),
+            assignClubs: () => api.request('/admin/assign-clubs', { method: 'POST' }),
+            getAssignments: () => api.request('/admin/assignments'),
+            initDb: () => api.request('/admin/init-db', { method: 'POST' })
+        };
+
+        // 알림 컴포넌트
+        const Notification = ({ message, type, onClose }) => {
+            useEffect(() => {
+                const timer = setTimeout(onClose, 4000);
+                return () => clearTimeout(timer);
+            }, [onClose]);
+
+            const bgColor = type === 'success' ? 'bg-green-500' : 'bg-red-500';
+            const icon = type === 'success' ? 'fa-check' : 'fa-exclamation-triangle';
+
+            return (
+                <div className={`fixed top-4 right-4 ${bgColor} text-white px-6 py-3 rounded-lg shadow-lg notification z-50`}>
+                    <div className="flex items-center space-x-2">
+                        <i className={`fas ${icon}`}></i>
+                        <span>{message}</span>
+                        <button onClick={onClose} className="ml-2 text-white hover:text-gray-200">
+                            <i className="fas fa-times"></i>
+                        </button>
+                    </div>
+                </div>
+            );
+        };
+
+        // 로딩 컴포넌트
+        const Loading = () => (
+            <div className="flex justify-center items-center min-h-screen">
+                <div className="text-center">
+                    <div className="loading-spinner mx-auto mb-4"></div>
+                    <p className="text-gray-600">로딩 중...</p>
+                </div>
+            </div>
+        );
+
+        // 로그인 컴포넌트
+        const Login = ({ onLogin }) => {
+            const [credentials, setCredentials] = useState({ username: '', password: '' });
+            const [loading, setLoading] = useState(false);
+            const [error, setError] = useState('');
+
+            const handleSubmit = async (e) => {
+                e.preventDefault();
+                setLoading(true);
+                setError('');
+
+                try {
+                    const result = await api.login(credentials.username, credentials.password);
+                    localStorage.setItem('token', result.token);
+                    localStorage.setItem('user', JSON.stringify(result.user));
+                    onLogin(result.user);
+                } catch (error) {
+                    setError(error.message);
+                } finally {
+                    setLoading(false);
+                }
+            };
+
+            return (
+                <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center">
+                    <div className="max-w-md w-full bg-white rounded-xl shadow-xl p-8 bounce-in">
+                        <div className="text-center mb-8">
+                            <i className="fas fa-users text-4xl text-blue-600 mb-4"></i>
+                            <h1 className="text-2xl font-bold text-gray-800">오성중학교</h1>
+                            <p className="text-gray-600">동아리 편성 시스템</p>
+                        </div>
+
+                        <form onSubmit={handleSubmit} className="space-y-6">
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-2">
+                                    사용자 ID
+                                </label>
+                                <input
+                                    type="text"
+                                    value={credentials.username}
+                                    onChange={(e) => setCredentials({...credentials, username: e.target.value})}
+                                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                    placeholder="학번 또는 교사 ID"
+                                    required
+                                />
+                            </div>
+
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-2">
+                                    비밀번호
+                                </label>
+                                <input
+                                    type="password"
+                                    value={credentials.password}
+                                    onChange={(e) => setCredentials({...credentials, password: e.target.value})}
+                                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                    placeholder="비밀번호"
+                                    required
+                                />
+                            </div>
+
+                            {error && (
+                                <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg">
+                                    <i className="fas fa-exclamation-triangle mr-2"></i>
+                                    {error}
+                                </div>
+                            )}
+
+                            <button
+                                type="submit"
+                                disabled={loading}
+                                className="w-full bg-blue-600 text-white py-2 px-4 rounded-lg hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50 transition duration-200"
+                            >
+                                {loading ? (
+                                    <span className="flex items-center justify-center">
+                                        <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin mr-2"></div>
+                                        로그인 중...
+                                    </span>
+                                ) : (
+                                    '로그인'
+                                )}
+                            </button>
+                        </form>
+
+                        <div className="mt-6 p-4 bg-gray-50 rounded-lg">
+                            <h3 className="font-medium text-gray-700 mb-2">테스트 계정</h3>
+                            <div className="text-sm text-gray-600 space-y-1">
+                                <p><strong>관리자:</strong> admin / admin123</p>
+                                <p><strong>학생:</strong> 20251001 / student123</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        // 동아리 카드 컴포넌트
+        const ClubCard = ({ club, onSelect, isSelected }) => {
+            const progressPercentage = Math.min((club.current_members / club.max_members) * 100, 100);
+            const isNearFull = progressPercentage >= 80;
+            const isFull = club.current_members >= club.max_members;
+
+            return (
+                <div 
+                    className={`club-card bg-white rounded-lg shadow-md p-6 ${isSelected ? 'ring-2 ring-blue-500' : ''}`}
+                    onClick={() => onSelect(club)}
+                >
+                    <div className="flex justify-between items-start mb-4">
+                        <div>
+                            <h3 className="text-lg font-semibold text-gray-800">{club.name}</h3>
+                            <p className="text-sm text-gray-600 mt-1">
+                                <i className="fas fa-user-tie mr-1"></i>
+                                {club.teacher}
+                            </p>
+                        </div>
+                        <div className="text-right">
+                            <span className={`inline-block px-2 py-1 rounded-full text-xs font-medium ${
+                                club.category === '문화예술 활동' ? 'bg-purple-100 text-purple-800' :
+                                club.category === '스포츠 활동' ? 'bg-green-100 text-green-800' :
+                                club.category === '학술 활동' ? 'bg-blue-100 text-blue-800' :
+                                'bg-gray-100 text-gray-800'
+                            }`}>
+                                {club.category}
+                            </span>
+                        </div>
+                    </div>
+
+                    <div className="space-y-2 mb-4">
+                        <div className="flex items-center text-sm text-gray-600">
+                            <i className="fas fa-map-marker-alt mr-2"></i>
+                            <span>{club.location}</span>
+                        </div>
+                        <div className="flex items-center text-sm text-gray-600">
+                            <i className="fas fa-calendar-alt mr-2"></i>
+                            <span>{club.exhibition_plan}</span>
+                        </div>
+                    </div>
+
+                    <div className="mb-3">
+                        <div className="flex justify-between text-sm text-gray-600 mb-1">
+                            <span>신청 현황</span>
+                            <span className={`font-medium ${isFull ? 'text-red-600' : isNearFull ? 'text-yellow-600' : 'text-green-600'}`}>
+                                {club.current_members}/{club.max_members}명
+                            </span>
+                        </div>
+                        <div className="w-full bg-gray-200 rounded-full h-2">
+                            <div 
+                                className={`progress-bar h-2 rounded-full ${
+                                    isFull ? 'bg-red-500' : isNearFull ? 'bg-yellow-500' : 'bg-green-500'
+                                }`}
+                                style={{ width: `${progressPercentage}%` }}
+                            ></div>
+                        </div>
+                    </div>
+
+                    {isFull && (
+                        <div className="bg-red-50 border border-red-200 text-red-700 px-3 py-2 rounded-md text-sm">
+                            <i className="fas fa-exclamation-triangle mr-1"></i>
+                            정원이 가득 찼습니다
+                        </div>
+                    )}
+                </div>
+            );
+        };
+
+        // 동아리 상세 모달
+        const ClubDetailModal = ({ club, isOpen, onClose }) => {
+            if (!isOpen || !club) return null;
+
+            return (
+                <div className="fixed inset-0 bg-black bg-opacity-50 modal-backdrop flex items-center justify-center z-50" onClick={onClose}>
+                    <div className="bg-white rounded-xl max-w-2xl w-full mx-4 max-h-screen overflow-y-auto" onClick={e => e.stopPropagation()}>
+                        <div className="p-6">
+                            <div className="flex justify-between items-start mb-6">
+                                <div>
+                                    <h2 className="text-2xl font-bold text-gray-800">{club.name}</h2>
+                                    <p className="text-gray-600 mt-1">
+                                        <i className="fas fa-user-tie mr-2"></i>
+                                        담당교사: {club.teacher}
+                                    </p>
+                                </div>
+                                <button onClick={onClose} className="text-gray-400 hover:text-gray-600">
+                                    <i className="fas fa-times text-xl"></i>
+                                </button>
+                            </div>
+
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+                                <div className="space-y-4">
+                                    <div>
+                                        <h3 className="font-semibold text-gray-800 mb-2">
+                                            <i className="fas fa-tag mr-2"></i>기본 정보
+                                        </h3>
+                                        <div className="space-y-2 text-sm">
+                                            <p><span className="font-medium">분야:</span> {club.category}</p>
+                                            <p><span className="font-medium">활동 장소:</span> {club.location}</p>
+                                            <p><span className="font-medium">정원:</span> {club.min_members}~{club.max_members}명</p>
+                                            <p><span className="font-medium">전시/발표:</span> {club.exhibition_plan}</p>
+                                        </div>
+                                    </div>
+
+                                    <div>
+                                        <h3 className="font-semibold text-gray-800 mb-2">
+                                            <i className="fas fa-users mr-2"></i>현재 신청 현황
+                                        </h3>
+                                        <div className="bg-gray-50 p-3 rounded-lg">
+                                            <div className="flex justify-between items-center mb-2">
+                                                <span className="text-sm text-gray-600">신청자 수</span>
+                                                <span className="font-medium">{club.current_members}명</span>
+                                            </div>
+                                            <div className="w-full bg-gray-200 rounded-full h-2">
+                                                <div 
+                                                    className="bg-blue-500 h-2 rounded-full progress-bar"
+                                                    style={{ width: `${Math.min((club.current_members / club.max_members) * 100, 100)}%` }}
+                                                ></div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div className="space-y-4">
+                                    <div>
+                                        <h3 className="font-semibold text-gray-800 mb-2">
+                                            <i className="fas fa-bullseye mr-2"></i>동아리 목표
+                                        </h3>
+                                        <p className="text-sm text-gray-700 leading-relaxed">{club.goals}</p>
+                                    </div>
+
+                                    <div>
+                                        <h3 className="font-semibold text-gray-800 mb-2">
+                                            <i className="fas fa-clipboard-list mr-2"></i>주요 활동
+                                        </h3>
+                                        <p className="text-sm text-gray-700 leading-relaxed">{club.activities}</p>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div className="border-t pt-4">
+                                <h3 className="font-semibold text-gray-800 mb-2">
+                                    <i className="fas fa-info-circle mr-2"></i>동아리 소개
+                                </h3>
+                                <p className="text-sm text-gray-700 leading-relaxed">{club.description}</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        // 학생 대시보드
+        const StudentDashboard = ({ user, onLogout }) => {
+            const [clubs, setClubs] = useState([]);
+            const [myApplications, setMyApplications] = useState([]);
+            const [selectedClubs, setSelectedClubs] = useState({ first: null, second: null, third: null });
+            const [loading, setLoading] = useState(true);
+            const [selectedClub, setSelectedClub] = useState(null);
+            const [showModal, setShowModal] = useState(false);
+            const [searchTerm, setSearchTerm] = useState('');
+            const [categoryFilter, setCategoryFilter] = useState('all');
+            const [notification, setNotification] = useState(null);
+
+            useEffect(() => {
+                loadData();
+                const interval = setInterval(loadData, 30000); // 30초마다 새로고침
+                return () => clearInterval(interval);
+            }, []);
+
+            const loadData = async () => {
+                try {
+                    const [clubsData, applicationsData] = await Promise.all([
+                        api.getClubs(),
+                        api.getMyApplications()
+                    ]);
+
+                    setClubs(clubsData);
+                    setMyApplications(applicationsData);
+
+                    // 기존 신청 내용으로 선택 상태 복원
+                    const newSelectedClubs = { first: null, second: null, third: null };
+                    applicationsData.forEach(app => {
+                        if (app.preference === 1) newSelectedClubs.first = app.club_id;
+                        if (app.preference === 2) newSelectedClubs.second = app.club_id;
+                        if (app.preference === 3) newSelectedClubs.third = app.club_id;
+                    });
+                    setSelectedClubs(newSelectedClubs);
+                } catch (error) {
+                    showNotification(error.message, 'error');
+                } finally {
+                    setLoading(false);
+                }
+            };
+
+            const showNotification = (message, type = 'success') => {
+                setNotification({ message, type });
+            };
+
+            const handleClubSelect = (club, preference) => {
+                setSelectedClubs(prev => ({
+                    ...prev,
+                    [preference]: prev[preference] === club.id ? null : club.id
+                }));
+            };
+
+            const handleApply = async () => {
+                const { first, second, third } = selectedClubs;
+                
+                if (!first) {
+                    showNotification('1지망을 선택해주세요', 'error');
+                    return;
+                }
+
+                try {
+                    await api.apply({
+                        first_choice: first,
+                        second_choice: second,
+                        third_choice: third
+                    });
+
+                    showNotification('동아리 신청이 완료되었습니다!');
+                    loadData();
+                } catch (error) {
+                    showNotification(error.message, 'error');
+                }
+            };
+
+            const filteredClubs = clubs.filter(club => {
+                const matchesSearch = club.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                                    club.teacher.toLowerCase().includes(searchTerm.toLowerCase());
+                const matchesCategory = categoryFilter === 'all' || club.category === categoryFilter;
+                return matchesSearch && matchesCategory;
+            });
+
+            const categories = [...new Set(clubs.map(club => club.category))];
+
+            if (loading) return <Loading />;
+
+            return (
+                <div className="min-h-screen bg-gray-50">
+                    {/* 헤더 */}
+                    <header className="bg-white shadow-sm border-b">
+                        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+                            <div className="flex justify-between items-center h-16">
+                                <div className="flex items-center">
+                                    <i className="fas fa-users text-2xl text-blue-600 mr-3"></i>
+                                    <div>
+                                        <h1 className="text-xl font-bold text-gray-800">오성중학교 동아리 시스템</h1>
+                                        <p className="text-sm text-gray-600">2025학년도 창체동아리 신청</p>
+                                    </div>
+                                </div>
+                                <div className="flex items-center space-x-4">
+                                    <span className="text-sm text-gray-600">
+                                        <i className="fas fa-user mr-1"></i>
+                                        {user.name} ({user.student_id})
+                                    </span>
+                                    <button 
+                                        onClick={onLogout}
+                                        className="text-gray-600 hover:text-gray-800"
+                                    >
+                                        <i className="fas fa-sign-out-alt"></i>
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </header>
+
+                    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+                        {/* 신청 현황 카드 */}
+                        {myApplications.length > 0 && (
+                            <div className="bg-white rounded-lg shadow-md p-6 mb-8 fade-in">
+                                <h2 className="text-lg font-semibold text-gray-800 mb-4">
+                                    <i className="fas fa-clipboard-check mr-2"></i>
+                                    내 신청 현황
+                                </h2>
+                                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                                    {[1, 2, 3].map(preference => {
+                                        const app = myApplications.find(a => a.preference === preference);
+                                        return (
+                                            <div key={preference} className="border rounded-lg p-4">
+                                                <div className="flex items-center justify-between mb-2">
+                                                    <span className="font-medium text-gray-700">{preference}지망</span>
+                                                    {app && (
+                                                        <span className={`px-2 py-1 rounded-full text-xs font-medium ${
+                                                            app.status === 'assigned' ? 'bg-green-100 text-green-800' :
+                                                            app.status === 'rejected' ? 'bg-red-100 text-red-800' :
+                                                            'bg-yellow-100 text-yellow-800'
+                                                        }`}>
+                                                            {app.status === 'assigned' ? '배정됨' : 
+                                                             app.status === 'rejected' ? '탈락' : '대기중'}
+                                                        </span>
+                                                    )}
+                                                </div>
+                                                {app ? (
+                                                    <div>
+                                                        <p className="font-medium text-gray-800">{app.club_name}</p>
+                                                        <p className="text-sm text-gray-600">{app.teacher} 선생님</p>
+                                                        <p className="text-sm text-gray-600">{app.location}</p>
+                                                    </div>
+                                                ) : (
+                                                    <p className="text-gray-500 text-sm">미선택</p>
+                                                )}
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            </div>
+                        )}
+
+                        {/* 필터 및 검색 */}
+                        <div className="bg-white rounded-lg shadow-md p-6 mb-6">
+                            <div className="flex flex-col md:flex-row gap-4">
+                                <div className="flex-1">
+                                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                                        동아리 검색
+                                    </label>
+                                    <div className="relative">
+                                        <input
+                                            type="text"
+                                            value={searchTerm}
+                                            onChange={(e) => setSearchTerm(e.target.value)}
+                                            placeholder="동아리명 또는 담당교사 검색"
+                                            className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                        />
+                                        <i className="fas fa-search absolute left-3 top-3 text-gray-400"></i>
+                                    </div>
+                                </div>
+                                <div className="md:w-64">
+                                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                                        분야 필터
+                                    </label>
+                                    <select
+                                        value={categoryFilter}
+                                        onChange={(e) => setCategoryFilter(e.target.value)}
+                                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                    >
+                                        <option value="all">전체 분야</option>
+                                        {categories.map(category => (
+                                            <option key={category} value={category}>{category}</option>
+                                        ))}
+                                    </select>
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* 동아리 선택 섹션 */}
+                        <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
+                            {/* 동아리 목록 */}
+                            <div className="lg:col-span-3">
+                                <div className="bg-white rounded-lg shadow-md p-6">
+                                    <h2 className="text-lg font-semibold text-gray-800 mb-4">
+                                        동아리 목록 ({filteredClubs.length}개)
+                                    </h2>
+                                    <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                                        {filteredClubs.map(club => (
+                                            <ClubCard
+                                                key={club.id}
+                                                club={club}
+                                                onSelect={(club) => {
+                                                    setSelectedClub(club);
+                                                    setShowModal(true);
+                                                }}
+                                                isSelected={Object.values(selectedClubs).includes(club.id)}
+                                            />
+                                        ))}
+                                    </div>
+                                </div>
+                            </div>
+
+                            {/* 선택한 동아리 */}
+                            <div className="lg:col-span-1">
+                                <div className="bg-white rounded-lg shadow-md p-6 sticky top-4">
+                                    <h2 className="text-lg font-semibold text-gray-800 mb-4">선택한 동아리</h2>
+                                    
+                                    {[
+                                        { key: 'first', label: '1지망', color: 'bg-red-500' },
+                                        { key: 'second', label: '2지망', color: 'bg-yellow-500' },
+                                        { key: 'third', label: '3지망', color: 'bg-green-500' }
+                                    ].map(({ key, label, color }) => {
+                                        const clubId = selectedClubs[key];
+                                        const club = clubs.find(c => c.id === clubId);
+                                        
+                                        return (
+                                            <div key={key} className="mb-4 p-3 border rounded-lg">
+                                                <div className="flex items-center mb-2">
+                                                    <div className={`w-3 h-3 rounded-full ${color} mr-2`}></div>
+                                                    <span className="font-medium text-gray-700">{label}</span>
+                                                </div>
+                                                {club ? (
+                                                    <div>
+                                                        <p className="font-medium text-gray-800 text-sm">{club.name}</p>
+                                                        <p className="text-xs text-gray-600">{club.teacher}</p>
+                                                        <button
+                                                            onClick={() => setSelectedClubs(prev => ({ ...prev, [key]: null }))}
+                                                            className="text-xs text-red-600 hover:text-red-800 mt-1"
+                                                        >
+                                                            <i className="fas fa-times mr-1"></i>취소
+                                                        </button>
+                                                    </div>
+                                                ) : (
+                                                    <p className="text-gray-500 text-sm">선택되지 않음</p>
+                                                )}
+                                            </div>
+                                        );
+                                    })}
+
+                                    <button
+                                        onClick={handleApply}
+                                        disabled={!selectedClubs.first}
+                                        className="w-full bg-blue-600 text-white py-2 px-4 rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition duration-200"
+                                    >
+                                        <i className="fas fa-paper-plane mr-2"></i>
+                                        동아리 신청
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* 동아리 상세 모달 */}
+                    <ClubDetailModal
+                        club={selectedClub}
+                        isOpen={showModal}
+                        onClose={() => setShowModal(false)}
+                    />
+
+                    {/* 알림 */}
+                    {notification && (
+                        <Notification
+                            message={notification.message}
+                            type={notification.type}
+                            onClose={() => setNotification(null)}
+                        />
+                    )}
+                </div>
+            );
+        };
+
+        // 관리자 대시보드
+        const AdminDashboard = ({ user, onLogout }) => {
+            const [applications, setApplications] = useState([]);
+            const [assignments, setAssignments] = useState([]);
+            const [loading, setLoading] = useState(true);
+            const [activeTab, setActiveTab] = useState('applications');
+            const [notification, setNotification] = useState(null);
+
+            useEffect(() => {
+                loadData();
+            }, []);
+
+            const loadData = async () => {
+                try {
+                    const [applicationsData, assignmentsData] = await Promise.all([
+                        api.getAllApplications(),
+                        api.getAssignments()
+                    ]);
+                    setApplications(applicationsData);
+                    setAssignments(assignmentsData);
+                } catch (error) {
+                    showNotification(error.message, 'error');
+                } finally {
+                    setLoading(false);
+                }
+            };
+
+            const showNotification = (message, type = 'success') => {
+                setNotification({ message, type });
+            };
+
+            const handleAssignClubs = async () => {
+                if (!confirm('동아리 배정을 실행하시겠습니까? 기존 배정이 초기화됩니다.')) return;
+
+                try {
+                    await api.assignClubs();
+                    showNotification('동아리 배정이 완료되었습니다!');
+                    loadData();
+                } catch (error) {
+                    showNotification(error.message, 'error');
+                }
+            };
+
+            const exportToCSV = (data, filename) => {
+                const csv = data.map(row => Object.values(row).join(',')).join('\n');
+                const header = Object.keys(data[0] || {}).join(',');
+                const blob = new Blob([header + '\n' + csv], { type: 'text/csv' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = filename;
+                a.click();
+            };
+
+            if (loading) return <Loading />;
+
+            return (
+                <div className="min-h-screen bg-gray-50">
+                    {/* 헤더 */}
+                    <header className="bg-white shadow-sm border-b">
+                        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+                            <div className="flex justify-between items-center h-16">
+                                <div className="flex items-center">
+                                    <i className="fas fa-cog text-2xl text-blue-600 mr-3"></i>
+                                    <div>
+                                        <h1 className="text-xl font-bold text-gray-800">관리자 대시보드</h1>
+                                        <p className="text-sm text-gray-600">동아리 편성 관리</p>
+                                    </div>
+                                </div>
+                                <div className="flex items-center space-x-4">
+                                    <span className="text-sm text-gray-600">
+                                        <i className="fas fa-user-shield mr-1"></i>
+                                        {user.name} (관리자)
+                                    </span>
+                                    <button 
+                                        onClick={onLogout}
+                                        className="text-gray-600 hover:text-gray-800"
+                                    >
+                                        <i className="fas fa-sign-out-alt"></i>
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </header>
+
+                    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+                        {/* 통계 카드 */}
+                        <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
+                            <div className="bg-white p-6 rounded-lg shadow-md">
+                                <div className="flex items-center">
+                                    <div className="flex-shrink-0">
+                                        <i className="fas fa-users text-2xl text-blue-600"></i>
+                                    </div>
+                                    <div className="ml-4">
+                                        <p className="text-sm font-medium text-gray-600">총 신청자</p>
+                                        <p className="text-2xl font-semibold text-gray-900">
+                                            {new Set(applications.map(app => app.student_id)).size}명
+                                        </p>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <div className="bg-white p-6 rounded-lg shadow-md">
+                                <div className="flex items-center">
+                                    <div className="flex-shrink-0">
+                                        <i className="fas fa-clipboard-list text-2xl text-green-600"></i>
+                                    </div>
+                                    <div className="ml-4">
+                                        <p className="text-sm font-medium text-gray-600">총 신청 수</p>
+                                        <p className="text-2xl font-semibold text-gray-900">{applications.length}건</p>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <div className="bg-white p-6 rounded-lg shadow-md">
+                                <div className="flex items-center">
+                                    <div className="flex-shrink-0">
+                                        <i className="fas fa-check-circle text-2xl text-purple-600"></i>
+                                    </div>
+                                    <div className="ml-4">
+                                        <p className="text-sm font-medium text-gray-600">배정 완료</p>
+                                        <p className="text-2xl font-semibold text-gray-900">
+                                            {applications.filter(app => app.status === 'assigned').length}건
+                                        </p>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <div className="bg-white p-6 rounded-lg shadow-md">
+                                <div className="flex items-center">
+                                    <div className="flex-shrink-0">
+                                        <i className="fas fa-clock text-2xl text-yellow-600"></i>
+                                    </div>
+                                    <div className="ml-4">
+                                        <p className="text-sm font-medium text-gray-600">대기중</p>
+                                        <p className="text-2xl font-semibold text-gray-900">
+                                            {applications.filter(app => app.status === 'pending').length}건
+                                        </p>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* 탭 네비게이션 */}
+                        <div className="bg-white rounded-lg shadow-md mb-6">
+                            <div className="border-b border-gray-200">
+                                <nav className="flex space-x-8 px-6">
+                                    <button
+                                        onClick={() => setActiveTab('applications')}
+                                        className={`py-4 px-1 border-b-2 font-medium text-sm ${
+                                            activeTab === 'applications'
+                                                ? 'border-blue-500 text-blue-600'
+                                                : 'border-transparent text-gray-500 hover:text-gray-700'
+                                        }`}
+                                    >
+                                        신청 현황
+                                    </button>
+                                    <button
+                                        onClick={() => setActiveTab('assignments')}
+                                        className={`py-4 px-1 border-b-2 font-medium text-sm ${
+                                            activeTab === 'assignments'
+                                                ? 'border-blue-500 text-blue-600'
+                                                : 'border-transparent text-gray-500 hover:text-gray-700'
+                                        }`}
+                                    >
+                                        배정 결과
+                                    </button>
+                                </nav>
+                            </div>
+
+                            <div className="p-6">
+                                {activeTab === 'applications' && (
+                                    <div>
+                                        <div className="flex justify-between items-center mb-4">
+                                            <h3 className="text-lg font-semibold text-gray-800">신청 현황</h3>
+                                            <div className="space-x-2">
+                                                <button
+                                                    onClick={() => exportToCSV(applications, 'applications.csv')}
+                                                    className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700"
+                                                >
+                                                    <i className="fas fa-download mr-2"></i>CSV 내보내기
+                                                </button>
+                                                <button
+                                                    onClick={handleAssignClubs}
+                                                    className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+                                                >
+                                                    <i className="fas fa-magic mr-2"></i>동아리 배정 실행
+                                                </button>
+                                            </div>
+                                        </div>
+                                        
+                                        <div className="overflow-x-auto">
+                                            <table className="min-w-full divide-y divide-gray-200">
+                                                <thead className="bg-gray-50">
+                                                    <tr>
+                                                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                                            학생 정보
+                                                        </th>
+                                                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                                            동아리
+                                                        </th>
+                                                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                                            지망 순위
+                                                        </th>
+                                                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                                            상태
+                                                        </th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody className="bg-white divide-y divide-gray-200">
+                                                    {applications.map((app, index) => (
+                                                        <tr key={index}>
+                                                            <td className="px-6 py-4 whitespace-nowrap">
+                                                                <div>
+                                                                    <div className="text-sm font-medium text-gray-900">
+                                                                        {app.student_name}
+                                                                    </div>
+                                                                    <div className="text-sm text-gray-500">
+                                                                        {app.student_id}
+                                                                    </div>
+                                                                </div>
+                                                            </td>
+                                                            <td className="px-6 py-4 whitespace-nowrap">
+                                                                <div>
+                                                                    <div className="text-sm font-medium text-gray-900">
+                                                                        {app.club_name}
+                                                                    </div>
+                                                                    <div className="text-sm text-gray-500">
+                                                                        {app.teacher}
+                                                                    </div>
+                                                                </div>
+                                                            </td>
+                                                            <td className="px-6 py-4 whitespace-nowrap">
+                                                                <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
+                                                                    app.preference === 1 ? 'bg-red-100 text-red-800' :
+                                                                    app.preference === 2 ? 'bg-yellow-100 text-yellow-800' :
+                                                                    'bg-green-100 text-green-800'
+                                                                }`}>
+                                                                    {app.preference}지망
+                                                                </span>
+                                                            </td>
+                                                            <td className="px-6 py-4 whitespace-nowrap">
+                                                                <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
+                                                                    app.status === 'assigned' ? 'bg-green-100 text-green-800' :
+                                                                    app.status === 'rejected' ? 'bg-red-100 text-red-800' :
+                                                                    'bg-yellow-100 text-yellow-800'
+                                                                }`}>
+                                                                    {app.status === 'assigned' ? '배정됨' : 
+                                                                     app.status === 'rejected' ? '탈락' : '대기중'}
+                                                                </span>
+                                                            </td>
+                                                        </tr>
+                                                    ))}
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    </div>
+                                )}
+
+                                {activeTab === 'assignments' && (
+                                    <div>
+                                        <div className="flex justify-between items-center mb-4">
+                                            <h3 className="text-lg font-semibold text-gray-800">배정 결과</h3>
+                                            <button
+                                                onClick={() => exportToCSV(assignments, 'assignments.csv')}
+                                                className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700"
+                                            >
+                                                <i className="fas fa-download mr-2"></i>CSV 내보내기
+                                            </button>
+                                        </div>
+                                        
+                                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                                            {assignments.map((assignment, index) => (
+                                                <div key={index} className="bg-gray-50 rounded-lg p-4">
+                                                    <div className="flex justify-between items-start mb-3">
+                                                        <h4 className="font-semibold text-gray-800">{assignment.club_name}</h4>
+                                                        <span className={`text-sm px-2 py-1 rounded-full ${
+                                                            assignment.assigned_count >= assignment.max_members 
+                                                                ? 'bg-red-100 text-red-800' 
+                                                                : 'bg-green-100 text-green-800'
+                                                        }`}>
+                                                            {assignment.assigned_count}/{assignment.max_members}명
+                                                        </span>
+                                                    </div>
+                                                    <p className="text-sm text-gray-600 mb-2">
+                                                        <i className="fas fa-user-tie mr-1"></i>
+                                                        {assignment.teacher}
+                                                    </p>
+                                                    <p className="text-sm text-gray-600 mb-3">
+                                                        <i className="fas fa-map-marker-alt mr-1"></i>
+                                                        {assignment.location}
+                                                    </p>
+                                                    {assignment.students && (
+                                                        <div>
+                                                            <p className="text-xs text-gray-500 mb-1">배정된 학생:</p>
+                                                            <p className="text-xs text-gray-700">{assignment.students}</p>
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* 알림 */}
+                    {notification && (
+                        <Notification
+                            message={notification.message}
+                            type={notification.type}
+                            onClose={() => setNotification(null)}
+                        />
+                    )}
+                </div>
+            );
+        };
+
+        // 메인 App 컴포넌트
+        const App = () => {
+            const [user, setUser] = useState(null);
+            const [loading, setLoading] = useState(true);
+
+            useEffect(() => {
+                const token = localStorage.getItem('token');
+                const userData = localStorage.getItem('user');
+                
+                if (token && userData) {
+                    try {
+                        setUser(JSON.parse(userData));
+                    } catch (error) {
+                        localStorage.removeItem('token');
+                        localStorage.removeItem('user');
+                    }
+                }
+                setLoading(false);
+            }, []);
+
+            const handleLogin = (userData) => {
+                setUser(userData);
+            };
+
+            const handleLogout = () => {
+                localStorage.removeItem('token');
+                localStorage.removeItem('user');
+                setUser(null);
+            };
+
+            if (loading) return <Loading />;
+
+            if (!user) {
+                return <Login onLogin={handleLogin} />;
+            }
+
+            if (user.role === 'admin') {
+                return <AdminDashboard user={user} onLogout={handleLogout} />;
+            }
+
+            return <StudentDashboard user={user} onLogout={handleLogout} />;
+        };
+
+        // React 앱 렌더링
+        ReactDOM.render(<App />, document.getElementById('root'));
+    </script>
+</body>
+</html>
