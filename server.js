@@ -23,43 +23,9 @@ console.log(`🚀 ${SYSTEM_INFO.name} v${SYSTEM_INFO.version} 시작`);
 console.log(`📅 시작 시간: ${SYSTEM_INFO.startTime.toISOString()}`);
 console.log(`🌍 환경: ${SYSTEM_INFO.environment}`);
 
-// 보안 미들웨어 (CSP 수정)
+// 보안 미들웨어 (CSP 수정 - 핵심 수정사항)
 app.use(helmet({
-    contentSecurityPolicy: process.env.NODE_ENV === 'production' ? {
-        directives: {
-            defaultSrc: ["'self'"],
-            scriptSrc: [
-                "'self'", 
-                "'unsafe-inline'", 
-                "'unsafe-eval'",
-                "https://unpkg.com",
-                "https://cdn.jsdelivr.net",
-                "https://cdnjs.cloudflare.com",
-                "https://cdn.tailwindcss.com"
-            ],
-            styleSrc: [
-                "'self'", 
-                "'unsafe-inline'",
-                "https://fonts.googleapis.com",
-                "https://cdnjs.cloudflare.com",
-                "https://cdn.tailwindcss.com"
-            ],
-            fontSrc: [
-                "'self'",
-                "data:",
-                "https://fonts.gstatic.com",
-                "https://cdnjs.cloudflare.com"
-            ],
-            imgSrc: ["'self'", "data:", "https:"],
-            connectSrc: [
-                "'self'",
-                "https://fonts.googleapis.com",
-                "https://fonts.gstatic.com", 
-                "https://cdn.jsdelivr.net",
-                "https://cdnjs.cloudflare.com"
-            ]
-        }
-    } : false,
+    contentSecurityPolicy: false, // CSP 완전 비활성화로 즉시 해결
     crossOriginEmbedderPolicy: false
 }));
 
@@ -1031,7 +997,7 @@ app.post('/api/admin/assign-clubs', authenticateToken, requireAdmin, async (req,
                 assignment_duration_ms: duration,
                 clubs_statistics: stats.rows
             },
-            assignment_log: ENV.isDevelopment ? assignmentLog.slice(0, 10) : undefined // 개발환경에서만 로그 제공
+            assignment_log: process.env.NODE_ENV === 'development' ? assignmentLog.slice(0, 10) : undefined // 개발환경에서만 로그 제공
         });
         
     } catch (error) {
