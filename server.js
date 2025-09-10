@@ -60,7 +60,9 @@ app.use(helmet({
             fontSrc: [
                 "'self'",
                 "https://fonts.gstatic.com",
-                "https://cdnjs.cloudflare.com"
+                "https://fonts.googleapis.com",
+                "https://cdnjs.cloudflare.com",
+                "data:"
             ],
             imgSrc: [
                 "'self'",
