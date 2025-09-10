@@ -12,19 +12,44 @@ require('dotenv').config();
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+// 환경변수 검증 및 기본값 설정
+const config = {
+    JWT_SECRET: process.env.JWT_SECRET || 'oseong-middle-school-2025-super-secret-key',
+    ADMIN_PASSWORD: process.env.ADMIN_PASSWORD || 'admin123',
+    INIT_KEY: process.env.INIT_KEY || 'default-init-key',
+    BCRYPT_SALT_ROUNDS: parseInt(process.env.BCRYPT_SALT_ROUNDS) || 12,
+    RATE_LIMIT_MAX_REQUESTS: parseInt(process.env.RATE_LIMIT_MAX_REQUESTS) || 100,
+    RATE_LIMIT_WINDOW_MS: parseInt(process.env.RATE_LIMIT_WINDOW_MS) || 15 * 60 * 1000,
+    LOG_LEVEL: process.env.LOG_LEVEL || 'info',
+    NODE_ENV: process.env.NODE_ENV || 'development',
+    CORS_ORIGIN: process.env.CORS_ORIGIN
+};
+
+// 필수 환경변수 검증
+if (!process.env.DATABASE_URL) {
+    console.error('❌ DATABASE_URL 환경변수가 설정되지 않았습니다.');
+    process.exit(1);
+}
+
+if (!process.env.JWT_SECRET && config.NODE_ENV === 'production') {
+    console.error('❌ 프로덕션 환경에서는 JWT_SECRET 환경변수가 필수입니다.');
+    process.exit(1);
+}
+
 // 시스템 정보
 const SYSTEM_INFO = {
     name: '오성중학교 동아리 편성 시스템',
-    version: '1.0.1',
+    version: '1.0.2',
     startTime: new Date(),
-    environment: process.env.NODE_ENV || 'development'
+    environment: config.NODE_ENV
 };
 
 console.log(`🚀 ${SYSTEM_INFO.name} v${SYSTEM_INFO.version} 시작`);
 console.log(`📅 시작 시간: ${SYSTEM_INFO.startTime.toISOString()}`);
 console.log(`🌍 환경: ${SYSTEM_INFO.environment}`);
+console.log(`🔐 보안 설정: bcrypt rounds=${config.BCRYPT_SALT_ROUNDS}, rate limit=${config.RATE_LIMIT_MAX_REQUESTS}/15min`);
 
-// 압축 미들웨어 (개선된 성능)
+// 압축 미들웨어
 app.use(compression({
     level: 6,
     threshold: 1024,
@@ -36,15 +61,15 @@ app.use(compression({
     }
 }));
 
-// 보안 미들웨어 (CSP 및 보안 헤더 개선)
+// 보안 미들웨어
 app.use(helmet({
     contentSecurityPolicy: {
         directives: {
             defaultSrc: ["'self'"],
             scriptSrc: [
                 "'self'",
-                "'unsafe-inline'", // React 및 Babel을 위해 필요
-                "'unsafe-eval'", // Babel을 위해 필요
+                "'unsafe-inline'",
+                "'unsafe-eval'",
                 "https://unpkg.com",
                 "https://cdn.tailwindcss.com",
                 "https://cdn.jsdelivr.net",
@@ -52,7 +77,7 @@ app.use(helmet({
             ],
             styleSrc: [
                 "'self'",
-                "'unsafe-inline'", // Tailwind CSS를 위해 필요
+                "'unsafe-inline'",
                 "https://fonts.googleapis.com",
                 "https://cdnjs.cloudflare.com",
                 "https://cdn.tailwindcss.com"
@@ -71,7 +96,7 @@ app.use(helmet({
             ],
             connectSrc: [
                 "'self'",
-                process.env.NODE_ENV === 'development' ? "http://localhost:*" : "",
+                config.NODE_ENV === 'development' ? "http://localhost:*" : "",
                 "https:"
             ].filter(Boolean),
             frameSrc: ["'none'"],
@@ -80,7 +105,7 @@ app.use(helmet({
             formAction: ["'self'"],
             frameAncestors: ["'none'"]
         },
-        reportOnly: process.env.NODE_ENV === 'development'
+        reportOnly: config.NODE_ENV === 'development'
     },
     crossOriginEmbedderPolicy: false,
     hsts: {
@@ -90,11 +115,11 @@ app.use(helmet({
     }
 }));
 
-// 향상된 Rate limiting
+// Rate limiting 설정 (환경변수 활용)
 const createRateLimiter = (windowMs, max, message, skipPaths = []) => {
     return rateLimit({
-        windowMs,
-        max,
+        windowMs: windowMs || config.RATE_LIMIT_WINDOW_MS,
+        max: max || config.RATE_LIMIT_MAX_REQUESTS,
         message: { error: message, retryAfter: Math.ceil(windowMs / 1000) },
         standardHeaders: true,
         legacyHeaders: false,
@@ -104,7 +129,6 @@ const createRateLimiter = (windowMs, max, message, skipPaths = []) => {
                    req.path === '/favicon.ico';
         },
         keyGenerator: (req) => {
-            // IP와 User-Agent 조합으로 더 정확한 식별
             return `${req.ip}-${req.get('User-Agent')}`;
         }
     });
@@ -112,43 +136,41 @@ const createRateLimiter = (windowMs, max, message, skipPaths = []) => {
 
 // 일반 API Rate Limiting
 const generalLimiter = createRateLimiter(
-    15 * 60 * 1000, // 15분
-    process.env.NODE_ENV === 'production' ? 100 : 1000,
+    config.RATE_LIMIT_WINDOW_MS,
+    config.NODE_ENV === 'production' ? config.RATE_LIMIT_MAX_REQUESTS : 1000,
     '너무 많은 요청을 보냈습니다. 15분 후 다시 시도해주세요.',
-    ['/api/health', '/check-database']
+    ['/api/health', '/check-database', '/init-database']
 );
 
-// 로그인 전용 Rate Limiting (더 엄격)
+// 로그인 전용 Rate Limiting
 const loginLimiter = createRateLimiter(
-    15 * 60 * 1000, // 15분
-    5, // 15분에 5번만 시도 가능
+    15 * 60 * 1000,
+    5,
     '로그인 시도가 너무 많습니다. 15분 후 다시 시도해주세요.'
 );
 
 // 회원가입 Rate Limiting
 const registerLimiter = createRateLimiter(
-    60 * 60 * 1000, // 1시간
-    3, // 1시간에 3번만 가입 시도 가능
+    60 * 60 * 1000,
+    3,
     '회원가입 시도가 너무 많습니다. 1시간 후 다시 시도해주세요.'
 );
 
 app.use(generalLimiter);
 
-// CORS 설정 (보안 강화)
+// CORS 설정
 const corsOptions = {
     origin: function (origin, callback) {
         const allowedOrigins = [
-            process.env.CORS_ORIGIN,
+            config.CORS_ORIGIN,
             'https://oseong-club-selection.onrender.com',
-            'https://osung-club-system.onrender.com'
+            'https://oseong-club-system.onrender.com'
         ].filter(Boolean);
 
-        // 개발 환경에서는 localhost 허용
-        if (process.env.NODE_ENV !== 'production') {
+        if (config.NODE_ENV !== 'production') {
             allowedOrigins.push('http://localhost:3000', 'http://127.0.0.1:3000');
         }
 
-        // origin이 없는 경우 (같은 도메인) 허용
         if (!origin) return callback(null, true);
         
         if (allowedOrigins.indexOf(origin) !== -1) {
@@ -160,16 +182,15 @@ const corsOptions = {
     },
     credentials: true,
     optionsSuccessStatus: 200,
-    maxAge: 86400 // 24시간 preflight 캐싱
+    maxAge: 86400
 };
 
 app.use(cors(corsOptions));
 
-// 미들웨어 설정 (보안 강화)
+// 미들웨어 설정
 app.use(express.json({ 
     limit: '10mb',
     verify: (req, res, buf, encoding) => {
-        // JSON 페이로드 검증
         try {
             JSON.parse(buf);
         } catch (e) {
@@ -181,32 +202,29 @@ app.use(express.json({
 }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
-// 정적 파일 제공 (캐싱 최적화)
+// 정적 파일 제공
 app.use(express.static('public', {
-    maxAge: process.env.NODE_ENV === 'production' ? '1d' : '0',
+    maxAge: config.NODE_ENV === 'production' ? '1d' : '0',
     etag: true,
     lastModified: true,
     setHeaders: (res, path) => {
-        // 파일 타입별 캐싱 전략
         if (path.endsWith('.html')) {
             res.setHeader('Cache-Control', 'no-cache');
         } else if (path.match(/\.(js|css|png|jpg|jpeg|gif|ico|svg)$/)) {
-            res.setHeader('Cache-Control', 'public, max-age=31536000'); // 1년
+            res.setHeader('Cache-Control', 'public, max-age=31536000');
         }
     }
 }));
 
-// 파비콘 에러 방지
 app.get('/favicon.ico', (req, res) => {
     res.status(204).send();
 });
 
-// 향상된 요청 로깅
+// 로깅 미들웨어 (로그 레벨 활용)
 app.use((req, res, next) => {
     const start = Date.now();
     const originalSend = res.send;
     
-    // 로그에서 제외할 경로들
     const skipLogging = ['/favicon.ico', '/api/health'];
     
     res.send = function(data) {
@@ -215,31 +233,14 @@ app.use((req, res, next) => {
         const method = req.method;
         const url = req.url;
         const ip = req.ip || req.connection.remoteAddress;
-        const userAgent = req.get('User-Agent') || 'Unknown';
         
-        // 민감한 정보는 로그에서 제외
         const safeUrl = url.replace(/\/api\/login.*/, '/api/login')
                           .replace(/password=.*/, 'password=***');
         
         if (!skipLogging.includes(url)) {
-            const logData = {
-                method,
-                url: safeUrl,
-                status,
-                duration: `${duration}ms`,
-                ip,
-                userAgent: userAgent.substring(0, 100) // User-Agent 길이 제한
-            };
-            
-            // 에러 상태 코드는 별도 로깅
             if (status >= 400) {
                 console.warn(`⚠️ ${method} ${safeUrl} ${status} ${duration}ms - ${ip}`);
-                
-                // 프로덕션에서는 상세 에러 로깅
-                if (process.env.NODE_ENV === 'production' && status >= 500) {
-                    console.error('Server Error Details:', logData);
-                }
-            } else if (process.env.NODE_ENV === 'development') {
+            } else if (config.LOG_LEVEL === 'debug' || config.NODE_ENV === 'development') {
                 console.log(`✅ ${method} ${safeUrl} ${status} ${duration}ms`);
             }
         }
@@ -250,45 +251,35 @@ app.use((req, res, next) => {
     next();
 });
 
-// PostgreSQL 연결 설정 (연결 풀 최적화)
+// PostgreSQL 연결 설정
 const pool = new Pool({
     connectionString: process.env.DATABASE_URL,
-    ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false,
-    max: 20, // 최대 연결 수
-    idleTimeoutMillis: 30000, // 유휴 연결 타임아웃
-    connectionTimeoutMillis: 5000, // 연결 타임아웃 (증가)
-    acquireTimeoutMillis: 60000, // 연결 획득 타임아웃
-    statementTimeout: 30000, // 쿼리 타임아웃
+    ssl: config.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false,
+    max: 20,
+    idleTimeoutMillis: 30000,
+    connectionTimeoutMillis: 5000,
+    acquireTimeoutMillis: 60000,
+    statementTimeout: 30000,
     query_timeout: 30000,
     keepAlive: true,
     keepAliveInitialDelayMillis: 10000
 });
 
-// 데이터베이스 연결 상태 모니터링 (개선됨)
+// 데이터베이스 연결 모니터링
 pool.on('connect', (client) => {
-    console.log('✅ PostgreSQL 연결됨 (ID:', client.processID, ')');
+    if (config.LOG_LEVEL === 'debug') {
+        console.log('✅ PostgreSQL 연결됨 (ID:', client.processID, ')');
+    }
 });
 
 pool.on('error', (err, client) => {
     console.error('❌ PostgreSQL 연결 오류:', err.message);
-    if (client) {
+    if (client && config.LOG_LEVEL === 'debug') {
         console.error('클라이언트 ID:', client.processID);
     }
 });
 
-pool.on('acquire', (client) => {
-    if (process.env.NODE_ENV === 'development') {
-        console.log('🔗 연결 획득 (ID:', client.processID, ')');
-    }
-});
-
-pool.on('remove', (client) => {
-    if (process.env.NODE_ENV === 'development') {
-        console.log('🔚 연결 해제 (ID:', client.processID, ')');
-    }
-});
-
-// JWT 미들웨어 (보안 강화)
+// JWT 미들웨어
 const authenticateToken = (req, res, next) => {
     const authHeader = req.headers['authorization'];
     const token = authHeader && authHeader.split(' ')[1];
@@ -300,12 +291,11 @@ const authenticateToken = (req, res, next) => {
         });
     }
 
-    jwt.verify(token, process.env.JWT_SECRET, (err, user) => {
+    jwt.verify(token, config.JWT_SECRET, (err, user) => {
         if (err) {
             console.warn('🚫 잘못된 토큰 시도:', {
                 error: err.message,
-                ip: req.ip,
-                userAgent: req.get('User-Agent')
+                ip: req.ip
             });
             
             const errorMessages = {
@@ -325,7 +315,7 @@ const authenticateToken = (req, res, next) => {
     });
 };
 
-// 관리자 권한 확인 (로깅 개선)
+// 관리자 권한 확인
 const requireAdmin = (req, res, next) => {
     if (req.user.role !== 'admin') {
         console.warn(`🚫 관리자 권한 필요:`, {
@@ -342,7 +332,7 @@ const requireAdmin = (req, res, next) => {
     next();
 };
 
-// 데이터베이스 쿼리 래퍼 (에러 처리 개선)
+// 데이터베이스 쿼리 래퍼
 const dbQuery = async (query, params = []) => {
     const client = await pool.connect();
     try {
@@ -350,7 +340,7 @@ const dbQuery = async (query, params = []) => {
         const result = await client.query(query, params);
         const duration = Date.now() - start;
         
-        if (process.env.NODE_ENV === 'development' && duration > 1000) {
+        if (config.LOG_LEVEL === 'debug' && duration > 1000) {
             console.warn(`🐌 느린 쿼리 감지 (${duration}ms):`, query.substring(0, 100));
         }
         
@@ -368,24 +358,208 @@ const dbQuery = async (query, params = []) => {
     }
 };
 
+// ============= 데이터베이스 초기화 API =============
+app.get('/init-database', async (req, res) => {
+    const { key } = req.query;
+    
+    // 보안 키 검증
+    if (key !== config.INIT_KEY) {
+        console.warn(`🚫 잘못된 초기화 키 시도: ${req.ip}`);
+        return res.status(403).json({ 
+            error: '올바르지 않은 초기화 키입니다',
+            code: 'INVALID_INIT_KEY'
+        });
+    }
+    
+    const client = await pool.connect();
+    
+    try {
+        console.log('🔄 데이터베이스 초기화 시작...');
+        
+        await client.query('BEGIN');
+        
+        // 기존 테이블 삭제 (CASCADE로 외래키 제약조건 같이 삭제)
+        await client.query('DROP TABLE IF EXISTS applications CASCADE');
+        await client.query('DROP TABLE IF EXISTS clubs CASCADE');
+        await client.query('DROP TABLE IF EXISTS users CASCADE');
+        
+        // users 테이블 생성
+        await client.query(`
+            CREATE TABLE users (
+                id SERIAL PRIMARY KEY,
+                username VARCHAR(50) UNIQUE NOT NULL,
+                password VARCHAR(255) NOT NULL,
+                name VARCHAR(100) NOT NULL,
+                role VARCHAR(20) DEFAULT 'student',
+                class_info VARCHAR(50),
+                student_id VARCHAR(10),
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                last_login TIMESTAMP
+            )
+        `);
+        
+        // clubs 테이블 생성
+        await client.query(`
+            CREATE TABLE clubs (
+                id SERIAL PRIMARY KEY,
+                name VARCHAR(100) NOT NULL,
+                teacher VARCHAR(100) NOT NULL,
+                max_capacity INTEGER DEFAULT 30,
+                min_members INTEGER DEFAULT 5,
+                category VARCHAR(50) DEFAULT '일반 활동',
+                description TEXT,
+                activities TEXT,
+                goals TEXT,
+                requirements TEXT,
+                meeting_time VARCHAR(100),
+                location VARCHAR(100),
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        `);
+        
+        // applications 테이블 생성
+        await client.query(`
+            CREATE TABLE applications (
+                id SERIAL PRIMARY KEY,
+                user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+                club_id INTEGER REFERENCES clubs(id) ON DELETE CASCADE,
+                priority INTEGER NOT NULL,
+                status VARCHAR(20) DEFAULT 'pending',
+                applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                assigned_at TIMESTAMP
+            )
+        `);
+        
+        // 관리자 계정 생성 (환경변수 활용)
+        const hashedAdminPassword = await bcrypt.hash(config.ADMIN_PASSWORD, config.BCRYPT_SALT_ROUNDS);
+        await client.query(
+            'INSERT INTO users (username, password, name, role) VALUES ($1, $2, $3, $4)',
+            ['admin', hashedAdminPassword, '시스템 관리자', 'admin']
+        );
+        
+        // 샘플 동아리 데이터 추가
+        const clubs = [
+            ['축구부', '김철수', 25, 10, '체육 활동', '축구를 통한 체력 증진과 협동심 배양', '축구 경기, 체력 훈련, 팀워크 훈련', '건강한 신체와 협동심 기르기', '체력 및 운동신경', '화요일 7교시', '운동장'],
+            ['농구부', '이영희', 20, 8, '체육 활동', '농구를 통한 키 성장과 순발력 향상', '농구 경기, 드리블 연습, 슛 연습', '농구 실력 향상과 신체 발달', '키 150cm 이상', '목요일 7교시', '체육관'],
+            ['미술부', '박지연', 30, 5, '예술 활동', '다양한 미술 기법 학습과 창작 활동', '그리기, 만들기, 전시회 준비', '예술적 감성과 창의력 개발', '미술에 대한 관심', '금요일 7교시', '미술실'],
+            ['음악부', '최민수', 35, 10, '예술 활동', '합창과 악기 연주를 통한 음악적 재능 개발', '합창, 악기 연주, 발표회 준비', '음악적 소양과 표현력 향상', '음악에 대한 열정', '수요일 7교시', '음악실'],
+            ['과학실험부', '정호영', 25, 8, '학술 활동', '과학 실험을 통한 탐구력과 사고력 배양', '실험, 탐구활동, 과학전람회 준비', '과학적 사고력과 탐구정신 기르기', '과학 관련 과목 평균 80점 이상', '월요일 7교시', '과학실'],
+            ['독서토론부', '강수진', 20, 6, '학술 활동', '책 읽기와 토론을 통한 사고력 증진', '독서, 토론, 독후감 작성', '독서 습관과 논리적 사고력 기르기', '독서에 대한 관심', '화요일 7교시', '도서관'],
+            ['컴퓨터부', '임기웅', 30, 10, '기술 활동', '컴퓨터 활용 능력과 프로그래밍 기초 학습', '프로그래밍, 홈페이지 제작, 컴퓨터 조립', 'IT 기술 습득과 디지털 소양 기르기', '컴퓨터 기초 지식', '목요일 7교시', '컴퓨터실'],
+            ['영어회화부', '김나영', 25, 8, '언어 활동', '원어민과의 대화를 통한 영어 실력 향상', '영어 회화, 게임, 영어 연극', '실용적인 영어 회화 능력 기르기', '영어에 대한 관심', '금요일 7교시', '영어전용교실'],
+            ['방송부', '서동혁', 15, 5, '미디어 활동', '방송 제작과 아나운싱 기술 습득', '방송 제작, 아나운싱, 영상 편집', '방송 기술과 발표력 기르기', '목소리가 좋고 발표를 좋아하는 학생', '수요일 7교시', '방송실'],
+            ['환경보호부', '윤태준', 20, 6, '봉사 활동', '환경 보호 실천과 생태계 보전 활동', '환경 정화, 재활용, 환경 캠페인', '환경 의식과 실천력 기르기', '환경에 대한 관심', '월요일 7교시', '과학실']
+        ];
+        
+        for (const club of clubs) {
+            await client.query(
+                `INSERT INTO clubs (name, teacher, max_capacity, min_members, category, description, activities, goals, requirements, meeting_time, location) 
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+                club
+            );
+        }
+        
+        await client.query('COMMIT');
+        
+        console.log('✅ 데이터베이스 초기화 완료');
+        
+        res.json({
+            success: true,
+            message: '데이터베이스가 성공적으로 초기화되었습니다!',
+            data: {
+                tables_created: ['users', 'clubs', 'applications'],
+                admin_account: '관리자 계정 생성 완료',
+                sample_clubs: clubs.length + '개 동아리 데이터 추가',
+                login_info: {
+                    admin_username: 'admin',
+                    admin_password: '환경변수에서 설정한 비밀번호 사용'
+                }
+            },
+            timestamp: new Date().toISOString()
+        });
+        
+    } catch (error) {
+        await client.query('ROLLBACK');
+        console.error('❌ 데이터베이스 초기화 실패:', error);
+        res.status(500).json({ 
+            error: '데이터베이스 초기화에 실패했습니다',
+            details: error.message,
+            code: 'INIT_FAILED'
+        });
+    } finally {
+        client.release();
+    }
+});
+
+// 데이터베이스 상태 확인 API
+app.get('/check-database', async (req, res) => {
+    try {
+        const tableChecks = await Promise.all([
+            dbQuery("SELECT COUNT(*) as count FROM information_schema.tables WHERE table_name = 'users'"),
+            dbQuery("SELECT COUNT(*) as count FROM information_schema.tables WHERE table_name = 'clubs'"),
+            dbQuery("SELECT COUNT(*) as count FROM information_schema.tables WHERE table_name = 'applications'")
+        ]);
+        
+        const [usersTable, clubsTable, applicationsTable] = tableChecks;
+        
+        const tablesExist = {
+            users: parseInt(usersTable.rows[0].count) > 0,
+            clubs: parseInt(clubsTable.rows[0].count) > 0,
+            applications: parseInt(applicationsTable.rows[0].count) > 0
+        };
+        
+        const allTablesExist = Object.values(tablesExist).every(exists => exists);
+        
+        let counts = {};
+        if (allTablesExist) {
+            const countQueries = await Promise.all([
+                dbQuery("SELECT COUNT(*) as count FROM users"),
+                dbQuery("SELECT COUNT(*) as count FROM clubs"),
+                dbQuery("SELECT COUNT(*) as count FROM applications")
+            ]);
+            
+            counts = {
+                users: parseInt(countQueries[0].rows[0].count),
+                clubs: parseInt(countQueries[1].rows[0].count),
+                applications: parseInt(countQueries[2].rows[0].count)
+            };
+        }
+        
+        res.json({
+            database_status: allTablesExist ? 'ready' : 'needs_initialization',
+            tables_exist: tablesExist,
+            record_counts: counts,
+            initialization_needed: !allTablesExist,
+            init_url: !allTablesExist ? `/init-database?key=${config.INIT_KEY}` : null,
+            timestamp: new Date().toISOString()
+        });
+        
+    } catch (error) {
+        console.error('❌ 데이터베이스 상태 확인 실패:', error);
+        res.status(500).json({ 
+            error: '데이터베이스 상태를 확인할 수 없습니다',
+            details: error.message,
+            code: 'DB_CHECK_FAILED'
+        });
+    }
+});
+
 // ============= API 라우트 =============
 
-// 향상된 헬스체크 엔드포인트
+// 헬스체크 엔드포인트
 app.get('/api/health', async (req, res) => {
     const startTime = Date.now();
     
     try {
-        // 데이터베이스 연결 확인
         const dbStart = Date.now();
         const dbResult = await dbQuery('SELECT NOW() as current_time, version() as db_version');
         const dbDuration = Date.now() - dbStart;
         
-        // 시스템 정보 수집
         const uptime = process.uptime();
         const memory = process.memoryUsage();
         const totalDuration = Date.now() - startTime;
         
-        // 데이터베이스 풀 상태
         const poolStats = {
             total_connections: pool.totalCount,
             idle_connections: pool.idleCount,
@@ -415,7 +589,13 @@ app.get('/api/health', async (req, res) => {
                 rss_mb: Math.round(memory.rss / 1024 / 1024),
                 external_mb: Math.round(memory.external / 1024 / 1024)
             },
-            response_time_ms: totalDuration
+            response_time_ms: totalDuration,
+            config: {
+                cors_origin: config.CORS_ORIGIN,
+                rate_limit: config.RATE_LIMIT_MAX_REQUESTS,
+                bcrypt_rounds: config.BCRYPT_SALT_ROUNDS,
+                log_level: config.LOG_LEVEL
+            }
         });
         
     } catch (error) {
@@ -424,14 +604,14 @@ app.get('/api/health', async (req, res) => {
             status: 'unhealthy',
             timestamp: new Date().toISOString(),
             error: 'Database connection failed',
-            details: process.env.NODE_ENV === 'development' ? error.message : undefined,
+            details: config.NODE_ENV === 'development' ? error.message : undefined,
             service: SYSTEM_INFO.name,
             version: SYSTEM_INFO.version
         });
     }
 });
 
-// 시스템 정보 엔드포인트 (개선됨)
+// 시스템 정보 엔드포인트
 app.get('/api/info', (req, res) => {
     res.json({
         name: SYSTEM_INFO.name,
@@ -458,32 +638,32 @@ app.get('/api/info', (req, res) => {
             security: 'JWT + bcrypt + Helmet + CSP',
             performance: 'Compression + Connection Pooling'
         },
+        config: {
+            bcrypt_rounds: config.BCRYPT_SALT_ROUNDS,
+            rate_limit_max: config.RATE_LIMIT_MAX_REQUESTS,
+            rate_limit_window_minutes: config.RATE_LIMIT_WINDOW_MS / 60000,
+            log_level: config.LOG_LEVEL,
+            cors_origin: config.CORS_ORIGIN || 'Not set'
+        },
         api_endpoints: {
             health: '/api/health',
             info: '/api/info',
             auth: ['/api/login', '/api/register'],
             clubs: ['/api/clubs', '/api/my-applications'],
-            admin: ['/api/admin/applications', '/api/admin/assign-clubs']
-        },
-        security_features: [
-            'CSP (Content Security Policy)',
-            'Rate Limiting',
-            'JWT Token Authentication',
-            'Password Hashing (bcrypt)',
-            'SQL Injection Protection',
-            'CORS Protection'
-        ]
+            admin: ['/api/admin/applications', '/api/admin/assign-clubs'],
+            database: ['/check-database', '/init-database']
+        }
     });
 });
 
-// 학생 회원가입 API (보안 및 검증 강화)
+// 학생 회원가입 API
 app.post('/api/register', registerLimiter, async (req, res) => {
     const client = await pool.connect();
     
     try {
         const { student_number, name } = req.body;
         
-        // 입력 검증 강화
+        // 입력 검증
         if (!student_number || !name) {
             return res.status(400).json({ 
                 error: '학번과 이름을 모두 입력해주세요',
@@ -495,7 +675,7 @@ app.post('/api/register', registerLimiter, async (req, res) => {
             });
         }
         
-        // 학번 형식 검증 (4자리 숫자)
+        // 학번 형식 검증
         if (!/^\d{4}$/.test(student_number)) {
             return res.status(400).json({ 
                 error: '학번은 4자리 숫자로 입력해주세요 (예: 1101)',
@@ -503,7 +683,7 @@ app.post('/api/register', registerLimiter, async (req, res) => {
             });
         }
         
-        // 이름 검증 (한글 2-4글자, 보안 강화)
+        // 이름 검증
         if (!/^[가-힣]{2,4}$/.test(name)) {
             return res.status(400).json({ 
                 error: '이름은 한글 2-4글자로 입력해주세요',
@@ -511,7 +691,7 @@ app.post('/api/register', registerLimiter, async (req, res) => {
             });
         }
         
-        // 학번 유효성 검사 (1-3학년, 1-9반)
+        // 학번 유효성 검사
         const grade = parseInt(student_number.charAt(0));
         const classNum = parseInt(student_number.charAt(1));
         
@@ -531,7 +711,7 @@ app.post('/api/register', registerLimiter, async (req, res) => {
         
         await client.query('BEGIN');
         
-        // 중복 확인 (트랜잭션 내에서)
+        // 중복 확인
         const existingUser = await client.query(
             'SELECT id, name FROM users WHERE username = $1', 
             [student_number]
@@ -546,8 +726,8 @@ app.post('/api/register', registerLimiter, async (req, res) => {
             });
         }
         
-        // 비밀번호는 학번과 동일하게 설정 (보안 강화: bcrypt rounds 증가)
-        const password = await bcrypt.hash(student_number, 12);
+        // 비밀번호는 학번과 동일하게 설정
+        const password = await bcrypt.hash(student_number, config.BCRYPT_SALT_ROUNDS);
         
         // 학번에서 학년/반 자동 추출
         const autoClassInfo = `${grade}학년 ${classNum}반`;
@@ -587,7 +767,7 @@ app.post('/api/register', registerLimiter, async (req, res) => {
             error: error.message,
             ip: req.ip,
             student_number: req.body.student_number,
-            name: req.body.name?.substring(0, 2) + '*' // 개인정보 보호
+            name: req.body.name?.substring(0, 2) + '*'
         });
         res.status(500).json({ 
             error: '가입 처리 중 오류가 발생했습니다',
@@ -598,62 +778,7 @@ app.post('/api/register', registerLimiter, async (req, res) => {
     }
 });
 
-// 학번 중복 확인 API (캐싱 추가)
-const studentCheckCache = new Map();
-const CACHE_TTL = 5 * 60 * 1000; // 5분
-
-app.get('/api/check-student/:student_number', async (req, res) => {
-    try {
-        const { student_number } = req.params;
-        
-        // 학번 형식 검증
-        if (!/^\d{4}$/.test(student_number)) {
-            return res.status(400).json({ 
-                error: '올바른 학번 형식이 아닙니다',
-                exists: false
-            });
-        }
-        
-        // 캐시 확인
-        const cacheKey = `student_${student_number}`;
-        const cached = studentCheckCache.get(cacheKey);
-        
-        if (cached && (Date.now() - cached.timestamp) < CACHE_TTL) {
-            return res.json(cached.data);
-        }
-        
-        const result = await dbQuery(
-            'SELECT username, name, class_info FROM users WHERE username = $1', 
-            [student_number]
-        );
-        
-        const response = { 
-            exists: result.rows.length > 0,
-            ...(result.rows.length > 0 && {
-                student_info: {
-                    name: result.rows[0].name,
-                    class_info: result.rows[0].class_info
-                }
-            })
-        };
-        
-        // 캐시 저장
-        studentCheckCache.set(cacheKey, {
-            data: response,
-            timestamp: Date.now()
-        });
-        
-        res.json(response);
-    } catch (error) {
-        console.error('❌ 학번 확인 오류:', error);
-        res.status(500).json({ 
-            error: '확인 중 오류가 발생했습니다',
-            exists: false
-        });
-    }
-});
-
-// 사용자 인증 (보안 강화)
+// 사용자 인증 (환경변수 활용)
 app.post('/api/login', loginLimiter, async (req, res) => {
     try {
         const { username, password } = req.body;
@@ -666,7 +791,6 @@ app.post('/api/login', loginLimiter, async (req, res) => {
             });
         }
         
-        // SQL Injection 방지를 위한 추가 검증
         if (username.length > 50 || password.length > 50) {
             return res.status(400).json({
                 error: '입력값이 너무 깁니다',
@@ -682,8 +806,7 @@ app.post('/api/login', loginLimiter, async (req, res) => {
         if (userResult.rows.length === 0) {
             console.warn(`🚫 존재하지 않는 사용자 로그인 시도:`, {
                 username,
-                ip: req.ip,
-                userAgent: req.get('User-Agent')
+                ip: req.ip
             });
             return res.status(401).json({ 
                 error: '사용자를 찾을 수 없습니다',
@@ -697,8 +820,7 @@ app.post('/api/login', loginLimiter, async (req, res) => {
         if (!validPassword) {
             console.warn(`🚫 잘못된 비밀번호 시도:`, {
                 username,
-                ip: req.ip,
-                userAgent: req.get('User-Agent')
+                ip: req.ip
             });
             return res.status(401).json({ 
                 error: '비밀번호가 일치하지 않습니다',
@@ -706,7 +828,7 @@ app.post('/api/login', loginLimiter, async (req, res) => {
             });
         }
         
-        // JWT 토큰 생성 (더 많은 정보 포함, 보안 강화)
+        // JWT 토큰 생성
         const tokenPayload = {
             id: user.id,
             username: user.username,
@@ -718,7 +840,7 @@ app.post('/api/login', loginLimiter, async (req, res) => {
         
         const token = jwt.sign(
             tokenPayload,
-            process.env.JWT_SECRET,
+            config.JWT_SECRET,
             { 
                 expiresIn: '24h',
                 issuer: 'oseong-club-system',
@@ -727,7 +849,7 @@ app.post('/api/login', loginLimiter, async (req, res) => {
             }
         );
         
-        // 마지막 로그인 시간 업데이트 (비동기로 처리)
+        // 마지막 로그인 시간 업데이트
         dbQuery(
             'UPDATE users SET last_login = NOW() WHERE id = $1',
             [user.id]
@@ -771,15 +893,17 @@ app.post('/api/login', loginLimiter, async (req, res) => {
     }
 });
 
-// 동아리 목록 조회 (캐싱 및 성능 최적화)
+// 동아리 목록 조회
 const clubsCache = { data: null, timestamp: 0 };
-const CLUBS_CACHE_TTL = 2 * 60 * 1000; // 2분
+const CLUBS_CACHE_TTL = 2 * 60 * 1000;
 
 app.get('/api/clubs', async (req, res) => {
     try {
         // 캐시 확인
         if (clubsCache.data && (Date.now() - clubsCache.timestamp) < CLUBS_CACHE_TTL) {
-            console.log('📋 동아리 목록 조회 (캐시): ', clubsCache.data.length, '개');
+            if (config.LOG_LEVEL === 'debug') {
+                console.log('📋 동아리 목록 조회 (캐시): ', clubsCache.data.length, '개');
+            }
             return res.json({
                 success: true,
                 count: clubsCache.data.length,
@@ -815,7 +939,6 @@ app.get('/api/clubs', async (req, res) => {
             ORDER BY c.category, c.name
         `);
         
-        // 호환성을 위해 필드명 매핑 및 데이터 정규화
         const clubs = result.rows.map(club => ({
             ...club,
             max_members: club.max_capacity || club.max_members || 30,
@@ -833,7 +956,9 @@ app.get('/api/clubs', async (req, res) => {
         clubsCache.data = clubs;
         clubsCache.timestamp = Date.now();
         
-        console.log(`📋 동아리 목록 조회 (DB): ${clubs.length}개 동아리`);
+        if (config.LOG_LEVEL === 'debug') {
+            console.log(`📋 동아리 목록 조회 (DB): ${clubs.length}개 동아리`);
+        }
         
         const summary = {
             total_clubs: clubs.length,
@@ -865,69 +990,7 @@ app.get('/api/clubs', async (req, res) => {
     }
 });
 
-// 특정 동아리 상세 정보 (개선됨)
-app.get('/api/clubs/:id', async (req, res) => {
-    try {
-        const { id } = req.params;
-        
-        // ID 유효성 검사
-        if (!/^\d+$/.test(id)) {
-            return res.status(400).json({
-                error: '올바르지 않은 동아리 ID입니다',
-                code: 'INVALID_CLUB_ID'
-            });
-        }
-        
-        const result = await dbQuery(`
-            SELECT 
-                c.*,
-                COALESCE(s.current_members, 0) as current_members,
-                COALESCE(s.pending_applications, 0) as pending_applications,
-                COALESCE(s.assigned_members, 0) as assigned_members
-            FROM clubs c
-            LEFT JOIN (
-                SELECT 
-                    club_id,
-                    COUNT(*) as current_members,
-                    COUNT(CASE WHEN status = 'pending' THEN 1 END) as pending_applications,
-                    COUNT(CASE WHEN status = 'assigned' THEN 1 END) as assigned_members
-                FROM applications
-                WHERE club_id = $1
-                GROUP BY club_id
-            ) s ON c.id = s.club_id
-            WHERE c.id = $1
-        `, [id]);
-        
-        if (result.rows.length === 0) {
-            return res.status(404).json({ 
-                error: '동아리를 찾을 수 없습니다',
-                code: 'CLUB_NOT_FOUND'
-            });
-        }
-        
-        const club = result.rows[0];
-        console.log(`🔍 동아리 상세 조회: ${club.name} (ID: ${id})`);
-        
-        res.json({
-            success: true,
-            club: {
-                ...club,
-                max_members: club.max_capacity || club.max_members || 30,
-                availability_status: club.current_members >= club.max_capacity ? 'full' :
-                                   club.current_members >= club.max_capacity * 0.8 ? 'near_full' : 'available'
-            }
-        });
-        
-    } catch (error) {
-        console.error('❌ 동아리 상세 조회 오류:', error);
-        res.status(500).json({ 
-            error: '동아리 정보를 불러오는데 실패했습니다',
-            code: 'CLUB_DETAIL_FETCH_FAILED'
-        });
-    }
-});
-
-// 학생 동아리 신청 (개선됨)
+// 학생 동아리 신청
 app.post('/api/apply', authenticateToken, async (req, res) => {
     const client = await pool.connect();
     
@@ -971,7 +1034,9 @@ app.post('/api/apply', authenticateToken, async (req, res) => {
         
         // 기존 신청 삭제
         const deleteResult = await client.query('DELETE FROM applications WHERE user_id = $1', [user_id]);
-        console.log(`🗑️ 기존 신청 삭제: ${deleteResult.rowCount}건 (사용자: ${req.user.username})`);
+        if (config.LOG_LEVEL === 'debug') {
+            console.log(`🗑️ 기존 신청 삭제: ${deleteResult.rowCount}건 (사용자: ${req.user.username})`);
+        }
         
         // 새로운 신청 추가
         const applications = [
@@ -1023,7 +1088,7 @@ app.post('/api/apply', authenticateToken, async (req, res) => {
     }
 });
 
-// 학생 신청 현황 조회 (개선됨)
+// 학생 신청 현황 조회
 app.get('/api/my-applications', authenticateToken, async (req, res) => {
     try {
         const user_id = req.user.id;
@@ -1049,7 +1114,9 @@ app.get('/api/my-applications', authenticateToken, async (req, res) => {
             ORDER BY a.priority
         `, [user_id]);
         
-        console.log(`📋 신청 현황 조회: ${req.user.name} (${result.rows.length}건)`);
+        if (config.LOG_LEVEL === 'debug') {
+            console.log(`📋 신청 현황 조회: ${req.user.name} (${result.rows.length}건)`);
+        }
         
         res.json({
             success: true,
@@ -1075,7 +1142,7 @@ app.get('/api/my-applications', authenticateToken, async (req, res) => {
     }
 });
 
-// 관리자: 모든 신청 현황 (개선됨)
+// 관리자: 모든 신청 현황
 app.get('/api/admin/applications', authenticateToken, requireAdmin, async (req, res) => {
     try {
         const { page = 1, limit = 50, status, club_id, grade } = req.query;
@@ -1087,17 +1154,17 @@ app.get('/api/admin/applications', authenticateToken, requireAdmin, async (req, 
         let paramCount = 0;
         
         if (status) {
-            conditions.push(`a.status = ${++paramCount}`);
+            conditions.push(`a.status = $${++paramCount}`);
             params.push(status);
         }
         
         if (club_id) {
-            conditions.push(`a.club_id = ${++paramCount}`);
+            conditions.push(`a.club_id = $${++paramCount}`);
             params.push(club_id);
         }
         
         if (grade) {
-            conditions.push(`LEFT(u.username, 1) = ${++paramCount}`);
+            conditions.push(`LEFT(u.username, 1) = $${++paramCount}`);
             params.push(grade);
         }
         
@@ -1120,7 +1187,7 @@ app.get('/api/admin/applications', authenticateToken, requireAdmin, async (req, 
             JOIN clubs c ON a.club_id = c.id
             ${whereClause}
             ORDER BY c.name, a.priority, u.name
-            LIMIT ${++paramCount} OFFSET ${++paramCount}
+            LIMIT $${++paramCount} OFFSET $${++paramCount}
         `;
         
         params.push(limit, offset);
@@ -1136,13 +1203,15 @@ app.get('/api/admin/applications', authenticateToken, requireAdmin, async (req, 
         
         const [applications, countResult] = await Promise.all([
             dbQuery(query, params),
-            dbQuery(countQuery, params.slice(0, -2)) // limit, offset 제외
+            dbQuery(countQuery, params.slice(0, -2))
         ]);
         
         const total = parseInt(countResult.rows[0].total);
         const totalPages = Math.ceil(total / limit);
         
-        console.log(`📊 관리자 신청 현황 조회: ${applications.rows.length}/${total}건 (페이지 ${page}/${totalPages})`);
+        if (config.LOG_LEVEL === 'debug') {
+            console.log(`📊 관리자 신청 현황 조회: ${applications.rows.length}/${total}건 (페이지 ${page}/${totalPages})`);
+        }
         
         res.json({
             success: true,
@@ -1166,7 +1235,7 @@ app.get('/api/admin/applications', authenticateToken, requireAdmin, async (req, 
     }
 });
 
-// 관리자: 동아리 배정 실행 (개선됨)
+// 관리자: 동아리 배정 실행
 app.post('/api/admin/assign-clubs', authenticateToken, requireAdmin, async (req, res) => {
     const client = await pool.connect();
     
@@ -1188,7 +1257,6 @@ app.post('/api/admin/assign-clubs', authenticateToken, requireAdmin, async (req,
         for (let priority = 1; priority <= 3; priority++) {
             console.log(`🔄 ${priority}지망 배정 중...`);
             
-            // 해당 우선순위의 미배정 신청자들을 랜덤 순서로 조회
             const applications = await client.query(`
                 SELECT 
                     a.user_id, 
@@ -1228,13 +1296,15 @@ app.post('/api/admin/assign-clubs', authenticateToken, requireAdmin, async (req,
                     assignedInThisPriority++;
                     totalAssigned++;
                     
-                    assignmentLog.push({
-                        student_name: app.student_name,
-                        student_id: app.student_id,
-                        club_name: app.club_name,
-                        priority: priority,
-                        status: 'assigned'
-                    });
+                    if (config.LOG_LEVEL === 'debug') {
+                        assignmentLog.push({
+                            student_name: app.student_name,
+                            student_id: app.student_id,
+                            club_name: app.club_name,
+                            priority: priority,
+                            status: 'assigned'
+                        });
+                    }
                 }
             }
             
@@ -1276,7 +1346,7 @@ app.post('/api/admin/assign-clubs', authenticateToken, requireAdmin, async (req,
                 assignment_duration_ms: duration,
                 clubs_statistics: stats.rows
             },
-            assignment_log: process.env.NODE_ENV === 'development' ? assignmentLog.slice(0, 10) : undefined // 개발환경에서만 로그 제공
+            assignment_log: config.LOG_LEVEL === 'debug' ? assignmentLog.slice(0, 10) : undefined
         });
         
     } catch (error) {
@@ -1292,7 +1362,7 @@ app.post('/api/admin/assign-clubs', authenticateToken, requireAdmin, async (req,
     }
 });
 
-// 관리자: 배정 결과 조회 (개선됨)
+// 관리자: 배정 결과 조회
 app.get('/api/admin/assignments', authenticateToken, requireAdmin, async (req, res) => {
     try {
         const result = await dbQuery(`
@@ -1334,7 +1404,9 @@ app.get('/api/admin/assignments', authenticateToken, requireAdmin, async (req, r
             return acc;
         }, {});
         
-        console.log(`📊 관리자 배정 결과 조회: ${totalClubs}개 동아리, ${totalAssigned}/${totalCapacity}명 배정`);
+        if (config.LOG_LEVEL === 'debug') {
+            console.log(`📊 관리자 배정 결과 조회: ${totalClubs}개 동아리, ${totalAssigned}/${totalCapacity}명 배정`);
+        }
         
         res.json({
             success: true,
@@ -1368,7 +1440,7 @@ app.get('/api/admin/assignments', authenticateToken, requireAdmin, async (req, r
 });
 
 // ========================================
-// 에러 핸들링 및 정적 파일 제공 (개선됨)
+// 에러 핸들링 및 정적 파일 제공
 // ========================================
 
 // 404 에러 핸들링 (API 라우트)
@@ -1385,22 +1457,23 @@ app.use('/api/*', (req, res) => {
             'POST /api/register',
             'GET /api/clubs',
             'POST /api/apply',
-            'GET /api/my-applications'
+            'GET /api/my-applications',
+            'GET /check-database',
+            'GET /init-database?key=INIT_KEY'
         ]
     });
 });
 
-// 전역 에러 핸들러 (개선됨)
+// 전역 에러 핸들러
 app.use((error, req, res, next) => {
     const errorId = Date.now().toString(36) + Math.random().toString(36).substr(2);
     
     console.error(`🚨 서버 오류 [${errorId}]:`, {
         error: error.message,
-        stack: error.stack,
+        stack: config.LOG_LEVEL === 'debug' ? error.stack : undefined,
         url: req.url,
         method: req.method,
         ip: req.ip,
-        userAgent: req.get('User-Agent'),
         timestamp: new Date().toISOString()
     });
     
@@ -1422,7 +1495,7 @@ app.use((error, req, res, next) => {
     }
     
     // 데이터베이스 관련 에러
-    if (error.code === '23505') { // unique violation
+    if (error.code === '23505') {
         return res.status(409).json({
             error: '중복된 데이터가 존재합니다',
             code: 'DUPLICATE_DATA',
@@ -1430,7 +1503,7 @@ app.use((error, req, res, next) => {
         });
     }
     
-    if (error.code === '23503') { // foreign key violation
+    if (error.code === '23503') {
         return res.status(400).json({
             error: '잘못된 참조 데이터입니다',
             code: 'INVALID_REFERENCE',
@@ -1449,12 +1522,12 @@ app.use((error, req, res, next) => {
     
     // 기본 서버 에러
     res.status(error.status || 500).json({
-        error: process.env.NODE_ENV === 'production' ? 
+        error: config.NODE_ENV === 'production' ? 
             '서버 처리 중 오류가 발생했습니다' : 
             error.message,
         code: 'SERVER_ERROR',
         error_id: errorId,
-        ...(process.env.NODE_ENV !== 'production' && { 
+        ...(config.NODE_ENV !== 'production' && { 
             stack: error.stack,
             details: error 
         })
@@ -1474,21 +1547,18 @@ app.get('*', (req, res) => {
     });
 });
 
-// Graceful shutdown (개선됨)
+// Graceful shutdown
 const gracefulShutdown = async (signal) => {
     console.log(`🛑 ${signal} 신호 받음, 서버를 안전하게 종료합니다...`);
     
-    // 새로운 연결 거부
     server.close(async () => {
         console.log('📡 HTTP 서버 종료됨');
         
         try {
-            // 데이터베이스 연결 종료
             await pool.end();
             console.log('📂 데이터베이스 연결 풀 종료됨');
             
             // 캐시 정리
-            studentCheckCache.clear();
             clubsCache.data = null;
             console.log('🧹 캐시 정리 완료');
             
@@ -1500,7 +1570,6 @@ const gracefulShutdown = async (signal) => {
         }
     });
     
-    // 강제 종료 타이머 (30초)
     setTimeout(() => {
         console.error('⏰ 종료 시간 초과, 강제 종료합니다');
         process.exit(1);
@@ -1514,7 +1583,6 @@ process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 process.on('unhandledRejection', (reason, promise) => {
     console.error('🚨 처리되지 않은 Promise Rejection:', {
         reason: reason,
-        promise: promise,
         timestamp: new Date().toISOString()
     });
 });
@@ -1526,7 +1594,6 @@ process.on('uncaughtException', (error) => {
         timestamp: new Date().toISOString()
     });
     
-    // 안전한 종료 시도
     gracefulShutdown('UNCAUGHT_EXCEPTION');
 });
 
@@ -1536,25 +1603,23 @@ const server = app.listen(PORT, '0.0.0.0', () => {
     console.log(`📡 서버 실행 중: http://0.0.0.0:${PORT}`);
     console.log(`🌍 환경: ${SYSTEM_INFO.environment}`);
     console.log(`⚡ Node.js: ${process.version}`);
-    console.log(`🏠 Working Directory: ${process.cwd()}`);
-    console.log(`🔒 보안 기능: CSP, Rate Limiting, JWT, bcrypt`);
+    console.log(`🔒 보안 기능: CSP, Rate Limiting, JWT, bcrypt(${config.BCRYPT_SALT_ROUNDS})`);
     console.log(`🚀 성능 기능: Compression, Connection Pooling, Caching`);
     console.log('='.repeat(60));
     console.log('📋 주요 엔드포인트:');
     console.log(`   • 메인 페이지: http://localhost:${PORT}`);
     console.log(`   • 헬스체크: http://localhost:${PORT}/api/health`);
     console.log(`   • 시스템 정보: http://localhost:${PORT}/api/info`);
-    console.log(`   • DB 초기화: http://localhost:${PORT}/init-database`);
+    console.log(`   • DB 초기화: http://localhost:${PORT}/init-database?key=${config.INIT_KEY}`);
     console.log(`   • DB 상태: http://localhost:${PORT}/check-database`);
     console.log('='.repeat(60));
     
-    // 개발 환경에서 추가 정보 표시
-    if (process.env.NODE_ENV !== 'production') {
+    if (config.NODE_ENV !== 'production') {
         console.log('🔧 개발 모드 정보:');
-        console.log(`   • 관리자 계정: admin / ${process.env.ADMIN_PASSWORD || 'admin123'}`);
-        console.log(`   • 자동 재시작: nodemon 사용 권장`);
-        console.log(`   • 로그 레벨: 상세`);
-        console.log(`   • 캐시 TTL: 학생체크 5분, 동아리목록 2분`);
+        console.log(`   • 관리자 계정: admin / ${config.ADMIN_PASSWORD}`);
+        console.log(`   • 초기화 키: ${config.INIT_KEY}`);
+        console.log(`   • 로그 레벨: ${config.LOG_LEVEL}`);
+        console.log(`   • CORS 원본: ${config.CORS_ORIGIN || 'Not set'}`);
     }
 });
 
