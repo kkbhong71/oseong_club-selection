@@ -863,8 +863,507 @@ app.get('/api/clubs', async (req, res) => {
     }
 });
 
-// 나머지 API 엔드포인트들도 유사하게 보안 및 성능 최적화...
-// (실제 구현에서는 모든 엔드포인트를 최적화해야 함)
+// 특정 동아리 상세 정보 (개선됨)
+app.get('/api/clubs/:id', async (req, res) => {
+    try {
+        const { id } = req.params;
+        
+        // ID 유효성 검사
+        if (!/^\d+$/.test(id)) {
+            return res.status(400).json({
+                error: '올바르지 않은 동아리 ID입니다',
+                code: 'INVALID_CLUB_ID'
+            });
+        }
+        
+        const result = await dbQuery(`
+            SELECT 
+                c.*,
+                COALESCE(s.current_members, 0) as current_members,
+                COALESCE(s.pending_applications, 0) as pending_applications,
+                COALESCE(s.assigned_members, 0) as assigned_members
+            FROM clubs c
+            LEFT JOIN (
+                SELECT 
+                    club_id,
+                    COUNT(*) as current_members,
+                    COUNT(CASE WHEN status = 'pending' THEN 1 END) as pending_applications,
+                    COUNT(CASE WHEN status = 'assigned' THEN 1 END) as assigned_members
+                FROM applications
+                WHERE club_id = $1
+                GROUP BY club_id
+            ) s ON c.id = s.club_id
+            WHERE c.id = $1
+        `, [id]);
+        
+        if (result.rows.length === 0) {
+            return res.status(404).json({ 
+                error: '동아리를 찾을 수 없습니다',
+                code: 'CLUB_NOT_FOUND'
+            });
+        }
+        
+        const club = result.rows[0];
+        console.log(`🔍 동아리 상세 조회: ${club.name} (ID: ${id})`);
+        
+        res.json({
+            success: true,
+            club: {
+                ...club,
+                max_members: club.max_capacity || club.max_members || 30,
+                availability_status: club.current_members >= club.max_capacity ? 'full' :
+                                   club.current_members >= club.max_capacity * 0.8 ? 'near_full' : 'available'
+            }
+        });
+        
+    } catch (error) {
+        console.error('❌ 동아리 상세 조회 오류:', error);
+        res.status(500).json({ 
+            error: '동아리 정보를 불러오는데 실패했습니다',
+            code: 'CLUB_DETAIL_FETCH_FAILED'
+        });
+    }
+});
+
+// 학생 동아리 신청 (개선됨)
+app.post('/api/apply', authenticateToken, async (req, res) => {
+    const client = await pool.connect();
+    
+    try {
+        const { first_choice, second_choice, third_choice } = req.body;
+        const user_id = req.user.id;
+        
+        // 입력 검증
+        if (!first_choice) {
+            return res.status(400).json({
+                error: '1지망은 필수로 선택해야 합니다',
+                code: 'FIRST_CHOICE_REQUIRED'
+            });
+        }
+        
+        // 중복 선택 확인
+        const choices = [first_choice, second_choice, third_choice].filter(Boolean);
+        const uniqueChoices = [...new Set(choices)];
+        
+        if (choices.length !== uniqueChoices.length) {
+            return res.status(400).json({
+                error: '같은 동아리를 중복으로 선택할 수 없습니다',
+                code: 'DUPLICATE_CHOICES'
+            });
+        }
+        
+        // 동아리 존재 여부 확인
+        const clubCheck = await client.query(
+            `SELECT id, name, max_capacity FROM clubs WHERE id = ANY($1::int[])`,
+            [choices]
+        );
+        
+        if (clubCheck.rows.length !== choices.length) {
+            return res.status(400).json({
+                error: '존재하지 않는 동아리가 포함되어 있습니다',
+                code: 'INVALID_CLUB_SELECTION'
+            });
+        }
+        
+        await client.query('BEGIN');
+        
+        // 기존 신청 삭제
+        const deleteResult = await client.query('DELETE FROM applications WHERE user_id = $1', [user_id]);
+        console.log(`🗑️ 기존 신청 삭제: ${deleteResult.rowCount}건 (사용자: ${req.user.username})`);
+        
+        // 새로운 신청 추가
+        const applications = [
+            { club_id: first_choice, priority: 1 },
+            { club_id: second_choice, priority: 2 },
+            { club_id: third_choice, priority: 3 }
+        ].filter(app => app.club_id);
+        
+        const insertPromises = applications.map(app =>
+            client.query(
+                `INSERT INTO applications (user_id, club_id, priority, status, applied_at) 
+                 VALUES ($1, $2, $3, 'pending', NOW())`,
+                [user_id, app.club_id, app.priority]
+            )
+        );
+        
+        await Promise.all(insertPromises);
+        await client.query('COMMIT');
+        
+        console.log(`✅ 동아리 신청 완료: ${req.user.name} (${req.user.username}) - ${applications.length}개 지망`);
+        
+        // 신청 결과 반환
+        const appliedClubs = clubCheck.rows.map(club => {
+            const priority = applications.find(app => app.club_id === club.id)?.priority;
+            return {
+                club_id: club.id,
+                club_name: club.name,
+                priority: priority,
+                max_capacity: club.max_capacity
+            };
+        }).sort((a, b) => a.priority - b.priority);
+        
+        res.json({
+            success: true,
+            message: '동아리 신청이 완료되었습니다!',
+            applications: appliedClubs,
+            applied_at: new Date().toISOString()
+        });
+        
+    } catch (error) {
+        await client.query('ROLLBACK');
+        console.error('❌ 동아리 신청 오류:', error);
+        res.status(500).json({ 
+            error: '동아리 신청에 실패했습니다',
+            code: 'APPLICATION_FAILED'
+        });
+    } finally {
+        client.release();
+    }
+});
+
+// 학생 신청 현황 조회 (개선됨)
+app.get('/api/my-applications', authenticateToken, async (req, res) => {
+    try {
+        const user_id = req.user.id;
+        
+        const result = await dbQuery(`
+            SELECT 
+                a.*,
+                c.name as club_name, 
+                c.teacher, 
+                c.location,
+                c.meeting_time,
+                c.max_capacity,
+                a.priority as preference,
+                a.applied_at,
+                CASE 
+                    WHEN a.status = 'assigned' THEN '배정 완료'
+                    WHEN a.status = 'rejected' THEN '배정 탈락'
+                    ELSE '배정 대기'
+                END as status_text
+            FROM applications a
+            JOIN clubs c ON a.club_id = c.id
+            WHERE a.user_id = $1
+            ORDER BY a.priority
+        `, [user_id]);
+        
+        console.log(`📋 신청 현황 조회: ${req.user.name} (${result.rows.length}건)`);
+        
+        res.json({
+            success: true,
+            count: result.rows.length,
+            applications: result.rows,
+            summary: {
+                total_applications: result.rows.length,
+                status_breakdown: {
+                    assigned: result.rows.filter(app => app.status === 'assigned').length,
+                    pending: result.rows.filter(app => app.status === 'pending').length,
+                    rejected: result.rows.filter(app => app.status === 'rejected').length
+                },
+                has_assignment: result.rows.some(app => app.status === 'assigned')
+            }
+        });
+        
+    } catch (error) {
+        console.error('❌ 신청 현황 조회 오류:', error);
+        res.status(500).json({ 
+            error: '신청 현황을 불러오는데 실패했습니다',
+            code: 'MY_APPLICATIONS_FETCH_FAILED'
+        });
+    }
+});
+
+// 관리자: 모든 신청 현황 (개선됨)
+app.get('/api/admin/applications', authenticateToken, requireAdmin, async (req, res) => {
+    try {
+        const { page = 1, limit = 50, status, club_id, grade } = req.query;
+        const offset = (page - 1) * limit;
+        
+        // 동적 WHERE 절 구성
+        const conditions = [];
+        const params = [];
+        let paramCount = 0;
+        
+        if (status) {
+            conditions.push(`a.status = ${++paramCount}`);
+            params.push(status);
+        }
+        
+        if (club_id) {
+            conditions.push(`a.club_id = ${++paramCount}`);
+            params.push(club_id);
+        }
+        
+        if (grade) {
+            conditions.push(`LEFT(u.username, 1) = ${++paramCount}`);
+            params.push(grade);
+        }
+        
+        const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+        
+        const query = `
+            SELECT 
+                a.*,
+                u.name as student_name,
+                u.username as student_id,
+                u.class_info,
+                c.name as club_name,
+                c.teacher,
+                c.max_capacity as max_members,
+                c.category,
+                a.priority as preference,
+                a.applied_at
+            FROM applications a
+            JOIN users u ON a.user_id = u.id
+            JOIN clubs c ON a.club_id = c.id
+            ${whereClause}
+            ORDER BY c.name, a.priority, u.name
+            LIMIT ${++paramCount} OFFSET ${++paramCount}
+        `;
+        
+        params.push(limit, offset);
+        
+        // 총 개수 조회
+        const countQuery = `
+            SELECT COUNT(*) as total
+            FROM applications a
+            JOIN users u ON a.user_id = u.id
+            JOIN clubs c ON a.club_id = c.id
+            ${whereClause}
+        `;
+        
+        const [applications, countResult] = await Promise.all([
+            dbQuery(query, params),
+            dbQuery(countQuery, params.slice(0, -2)) // limit, offset 제외
+        ]);
+        
+        const total = parseInt(countResult.rows[0].total);
+        const totalPages = Math.ceil(total / limit);
+        
+        console.log(`📊 관리자 신청 현황 조회: ${applications.rows.length}/${total}건 (페이지 ${page}/${totalPages})`);
+        
+        res.json({
+            success: true,
+            applications: applications.rows,
+            pagination: {
+                current_page: parseInt(page),
+                total_pages: totalPages,
+                total_items: total,
+                items_per_page: parseInt(limit),
+                has_next: page < totalPages,
+                has_prev: page > 1
+            }
+        });
+        
+    } catch (error) {
+        console.error('❌ 관리자 신청 현황 조회 오류:', error);
+        res.status(500).json({ 
+            error: '신청 현황을 불러오는데 실패했습니다',
+            code: 'ADMIN_APPLICATIONS_FETCH_FAILED'
+        });
+    }
+});
+
+// 관리자: 동아리 배정 실행 (개선됨)
+app.post('/api/admin/assign-clubs', authenticateToken, requireAdmin, async (req, res) => {
+    const client = await pool.connect();
+    
+    try {
+        console.log(`🎯 동아리 배정 시작: ${req.user.name} (${req.user.username})`);
+        const startTime = Date.now();
+        
+        await client.query('BEGIN');
+        
+        // 모든 신청을 pending으로 초기화
+        await client.query("UPDATE applications SET status = 'pending'");
+        console.log('📄 모든 신청 상태 초기화 완료');
+        
+        let totalAssigned = 0;
+        let totalRejected = 0;
+        const assignmentLog = [];
+        
+        // 1지망부터 3지망까지 순차적으로 배정
+        for (let priority = 1; priority <= 3; priority++) {
+            console.log(`🔄 ${priority}지망 배정 중...`);
+            
+            // 해당 우선순위의 미배정 신청자들을 랜덤 순서로 조회
+            const applications = await client.query(`
+                SELECT 
+                    a.user_id, 
+                    a.club_id, 
+                    c.max_capacity,
+                    u.name as student_name,
+                    u.username as student_id,
+                    c.name as club_name,
+                    (SELECT COUNT(*) FROM applications a2 WHERE a2.club_id = a.club_id AND a2.status = 'assigned') as current_assigned
+                FROM applications a
+                JOIN clubs c ON a.club_id = c.id
+                JOIN users u ON a.user_id = u.id
+                WHERE a.priority = $1 
+                  AND a.status = 'pending'
+                  AND a.user_id NOT IN (
+                      SELECT user_id FROM applications WHERE status = 'assigned'
+                  )
+                ORDER BY RANDOM()
+            `, [priority]);
+            
+            let assignedInThisPriority = 0;
+            
+            for (const app of applications.rows) {
+                if (app.current_assigned < app.max_capacity) {
+                    // 배정 가능
+                    await client.query(
+                        "UPDATE applications SET status = 'assigned' WHERE user_id = $1 AND club_id = $2",
+                        [app.user_id, app.club_id]
+                    );
+                    
+                    // 해당 학생의 다른 지망 신청들을 rejected로 변경
+                    await client.query(
+                        "UPDATE applications SET status = 'rejected' WHERE user_id = $1 AND club_id != $2",
+                        [app.user_id, app.club_id]
+                    );
+                    
+                    assignedInThisPriority++;
+                    totalAssigned++;
+                    
+                    assignmentLog.push({
+                        student_name: app.student_name,
+                        student_id: app.student_id,
+                        club_name: app.club_name,
+                        priority: priority,
+                        status: 'assigned'
+                    });
+                }
+            }
+            
+            console.log(`✅ ${priority}지망 배정 완료: ${assignedInThisPriority}명`);
+        }
+        
+        // 최종 미배정자들을 rejected로 처리
+        const rejectedResult = await client.query(
+            "UPDATE applications SET status = 'rejected' WHERE status = 'pending'"
+        );
+        totalRejected = rejectedResult.rowCount;
+        
+        await client.query('COMMIT');
+        
+        const duration = Date.now() - startTime;
+        console.log(`🎉 동아리 배정 완료: ${totalAssigned}명 배정, ${totalRejected}명 미배정 (${duration}ms)`);
+        
+        // 배정 결과 통계
+        const statsQuery = `
+            SELECT 
+                c.name as club_name,
+                c.max_capacity,
+                COUNT(a.user_id) as assigned_count,
+                ROUND((COUNT(a.user_id)::float / c.max_capacity) * 100, 1) as fill_rate
+            FROM clubs c
+            LEFT JOIN applications a ON c.id = a.club_id AND a.status = 'assigned'
+            GROUP BY c.id, c.name, c.max_capacity
+            ORDER BY assigned_count DESC
+        `;
+        
+        const stats = await client.query(statsQuery);
+        
+        res.json({
+            success: true,
+            message: '동아리 배정이 완료되었습니다!',
+            summary: {
+                total_assigned: totalAssigned,
+                total_rejected: totalRejected,
+                assignment_duration_ms: duration,
+                clubs_statistics: stats.rows
+            },
+            assignment_log: process.env.NODE_ENV === 'development' ? assignmentLog.slice(0, 10) : undefined // 개발환경에서만 로그 제공
+        });
+        
+    } catch (error) {
+        await client.query('ROLLBACK');
+        console.error('❌ 동아리 배정 오류:', error);
+        res.status(500).json({ 
+            error: '동아리 배정에 실패했습니다',
+            code: 'CLUB_ASSIGNMENT_FAILED',
+            details: error.message
+        });
+    } finally {
+        client.release();
+    }
+});
+
+// 관리자: 배정 결과 조회 (개선됨)
+app.get('/api/admin/assignments', authenticateToken, requireAdmin, async (req, res) => {
+    try {
+        const result = await dbQuery(`
+            SELECT 
+                c.id as club_id,
+                c.name as club_name,
+                c.teacher,
+                c.location,
+                c.category,
+                c.max_capacity as max_members,
+                c.min_members,
+                COUNT(a.user_id) as assigned_count,
+                ROUND((COUNT(a.user_id)::float / c.max_capacity) * 100, 1) as fill_percentage,
+                string_agg(
+                    u.name || ' (' || u.username || ', ' || u.class_info || ')', 
+                    ', ' 
+                    ORDER BY u.name
+                ) as students,
+                CASE 
+                    WHEN COUNT(a.user_id) < c.min_members THEN 'under_minimum'
+                    WHEN COUNT(a.user_id) = c.max_capacity THEN 'full'
+                    WHEN COUNT(a.user_id) >= c.max_capacity * 0.8 THEN 'near_full'
+                    ELSE 'normal'
+                END as status
+            FROM clubs c
+            LEFT JOIN applications a ON c.id = a.club_id AND a.status = 'assigned'
+            LEFT JOIN users u ON a.user_id = u.id
+            GROUP BY c.id, c.name, c.teacher, c.location, c.category, c.max_capacity, c.min_members
+            ORDER BY c.category, assigned_count DESC, c.name
+        `);
+        
+        // 전체 통계 계산
+        const totalCapacity = result.rows.reduce((sum, club) => sum + club.max_members, 0);
+        const totalAssigned = result.rows.reduce((sum, club) => sum + parseInt(club.assigned_count), 0);
+        const totalClubs = result.rows.length;
+        
+        const statusBreakdown = result.rows.reduce((acc, club) => {
+            acc[club.status] = (acc[club.status] || 0) + 1;
+            return acc;
+        }, {});
+        
+        console.log(`📊 관리자 배정 결과 조회: ${totalClubs}개 동아리, ${totalAssigned}/${totalCapacity}명 배정`);
+        
+        res.json({
+            success: true,
+            assignments: result.rows,
+            summary: {
+                total_clubs: totalClubs,
+                total_capacity: totalCapacity,
+                total_assigned: totalAssigned,
+                fill_rate: Math.round((totalAssigned / totalCapacity) * 100),
+                status_breakdown: statusBreakdown,
+                by_category: result.rows.reduce((acc, club) => {
+                    const category = club.category;
+                    if (!acc[category]) {
+                        acc[category] = { clubs: 0, assigned: 0, capacity: 0 };
+                    }
+                    acc[category].clubs++;
+                    acc[category].assigned += parseInt(club.assigned_count);
+                    acc[category].capacity += club.max_members;
+                    return acc;
+                }, {})
+            }
+        });
+        
+    } catch (error) {
+        console.error('❌ 배정 결과 조회 오류:', error);
+        res.status(500).json({ 
+            error: '배정 결과를 불러오는데 실패했습니다',
+            code: 'ASSIGNMENTS_FETCH_FAILED'
+        });
+    }
+});
 
 // ========================================
 // 에러 핸들링 및 정적 파일 제공 (개선됨)
