@@ -1,105 +1,274 @@
-# Render.com 배포 설정 파일
-# 오성중학교 동아리 편성 시스템
-
+# Render.com 배포 설정 파일 (최적화됨)
+# 오성중학교 동아리 편성 시스템 v1.0.1
 services:
   # 웹 서비스 (Node.js + Express + React)
   - type: web
-    name: osung-club-system
+    name: oseong-club-system
     env: node
-    plan: free  # 무료 플랜 사용
-    buildCommand: npm install
+    plan: starter  # 성능 향상을 위해 starter 플랜 권장 (무료 플랜도 가능)
+    region: singapore  # 한국과 가장 가까운 지역
+    
+    # 빌드 설정 (최적화됨)
+    buildCommand: |
+      echo "🚀 빌드 시작: $(date)"
+      npm ci --only=production
+      echo "📦 의존성 설치 완료"
+      echo "✅ 빌드 완료: $(date)"
+    
+    # 시작 명령어
     startCommand: npm start
-    healthCheckPath: /
+    
+    # 헬스체크 설정 (개선됨)
+    healthCheckPath: /api/health
+    
+    # 환경 변수 (보안 강화)
     envVars:
       - key: NODE_ENV
         value: production
       - key: JWT_SECRET
         generateValue: true  # 자동으로 안전한 랜덤 값 생성
+      - key: ADMIN_PASSWORD
+        generateValue: true  # 관리자 비밀번호 자동 생성
       - key: BCRYPT_SALT_ROUNDS
-        value: 10
+        value: "12"  # 보안 강화
       - key: MAX_FILE_SIZE
-        value: 10
+        value: "10"
       - key: RATE_LIMIT_WINDOW_MS
-        value: 900000
+        value: "900000"  # 15분
       - key: RATE_LIMIT_MAX_REQUESTS
-        value: 100
+        value: "100"
+      - key: SESSION_SECRET
+        generateValue: true
+      - key: INIT_KEY
+        generateValue: true  # DB 초기화 보안 키
+      - key: LOG_LEVEL
+        value: "info"
+      - key: CORS_ORIGIN
+        value: "https://oseong-club-selection.onrender.com"
+        
     # 자동 배포 설정
     autoDeploy: true
     branch: main
     
-  # PostgreSQL 데이터베이스
-databases:
-  - name: osung-club-db
-    databaseName: osung_club_db
-    user: osung_admin
-    plan: free  # 무료 플랜 (1GB 스토리지)
+    # 디스크 용량 (무료: 1GB, 유료: 더 많음)
+    disk:
+      name: oseong-club-disk
+      mountPath: /tmp
+      sizeGB: 1
     
-# 환경 변수 그룹
-envVarGroups:
-  - name: app-config
-    envVars:
-      - key: LOG_LEVEL
-        value: info
-      - key: SESSION_SECRET
-        generateValue: true
-        
-# 빌드 및 배포 후크
+# PostgreSQL 데이터베이스 (최적화됨)
+databases:
+  - name: oseong-club-db
+    databaseName: oseong_club_db
+    user: oseong_admin
+    plan: free  # 무료 플랜 (1GB 스토리지)
+    region: singapore  # 웹 서비스와 같은 지역
+    version: "15"  # PostgreSQL 최신 버전
+    
+    # 데이터베이스 설정
+    ipAllowList: []  # 모든 IP 허용 (Render 내부 네트워크)
+    
+# 빌드 및 배포 후크 (개선됨)
 hooks:
-  # 데이터베이스 마이그레이션 및 시드 실행
-  postDeploy:
-    - name: database-setup
+  # 배포 전 준비
+  preDeploy:
+    - name: pre-deploy-check
       command: |
-        if [ "$FIRST_DEPLOY" = "true" ]; then
-          echo "첫 배포: 데이터베이스 초기화 중..."
-          psql $DATABASE_URL -f database/init.sql
-          psql $DATABASE_URL -f database/seed.sql
-          echo "데이터베이스 초기화 완료"
-        else
-          echo "업데이트 배포: 마이그레이션 확인 중..."
-          # 향후 스키마 변경 시 마이그레이션 스크립트 실행
+        echo "🔍 배포 전 검사 시작"
+        echo "Node.js 버전: $(node --version)"
+        echo "npm 버전: $(npm --version)"
+        echo "메모리 상태: $(free -h || echo 'N/A')"
+        echo "디스크 상태: $(df -h || echo 'N/A')"
+        
+  # 배포 후 데이터베이스 초기화
+  postDeploy:
+    - name: database-initialization
+      command: |
+        echo "🗄️ 데이터베이스 초기화 시작"
+        
+        # 데이터베이스 연결 테스트
+        timeout 30 bash -c 'until pg_isready -h $DATABASE_HOST -p $DATABASE_PORT -U $DATABASE_USER; do echo "DB 연결 대기..."; sleep 2; done'
+        
+        if [ "$RENDER_SERVICE_TYPE" = "web" ]; then
+          echo "웹 서비스 배포 - DB 상태 확인"
+          
+          # 테이블 존재 여부 확인
+          TABLE_COUNT=$(psql $DATABASE_URL -t -c "SELECT count(*) FROM information_schema.tables WHERE table_schema = 'public';" | tr -d ' ')
+          
+          if [ "$TABLE_COUNT" -eq "0" ]; then
+            echo "🆕 첫 배포 - 데이터베이스 초기화 실행"
+            
+            # 헬스체크가 성공할 때까지 대기
+            timeout 60 bash -c 'until curl -f http://localhost:$PORT/api/health; do echo "서버 시작 대기..."; sleep 5; done'
+            
+            # DB 초기화 실행
+            curl -f "http://localhost:$PORT/init-database?key=$INIT_KEY" || {
+              echo "❌ DB 초기화 실패"
+              exit 1
+            }
+            
+            echo "✅ 데이터베이스 초기화 완료"
+          else
+            echo "📊 기존 데이터베이스 감지 - 마이그레이션 확인"
+            
+            # 향후 스키마 업데이트 시 마이그레이션 로직 추가
+            echo "마이그레이션 필요 시 여기에 코드 추가"
+          fi
         fi
         
-# 정적 파일 설정
-staticPublishPath: ./public
+        echo "🎉 배포 후 작업 완료"
 
-# 헬스체크 설정
+# 정적 파일 및 캐싱 설정
+headers:
+  # 보안 헤더
+  - source: "/*"
+    headers:
+      X-Frame-Options: "DENY"
+      X-Content-Type-Options: "nosniff"
+      Referrer-Policy: "strict-origin-when-cross-origin"
+      Permissions-Policy: "geolocation=(), microphone=(), camera=()"
+      
+  # 정적 파일 캐싱
+  - source: "/static/*"
+    headers:
+      Cache-Control: "public, max-age=31536000, immutable"
+      
+  - source: "*.js"
+    headers:
+      Cache-Control: "public, max-age=31536000"
+      
+  - source: "*.css"
+    headers:
+      Cache-Control: "public, max-age=31536000"
+      
+  - source: "*.png"
+    headers:
+      Cache-Control: "public, max-age=31536000"
+      
+  - source: "*.jpg"
+    headers:
+      Cache-Control: "public, max-age=31536000"
+
+# 헬스체크 및 모니터링 (강화됨)
 healthCheck:
   path: /api/health
   intervalSeconds: 30
   timeoutSeconds: 10
+  unhealthyThresholdCount: 3
+  healthyThresholdCount: 2
   
-# 로그 설정
+# 로그 설정 (구조화됨)
 logging:
   level: info
-  format: json
+  format: combined  # Apache 호환 로그 형식
   
-# 리소스 제한 (무료 플랜)
+# 리소스 제한 및 스케일링
 resources:
-  cpu: 0.1  # 100m CPU
-  memory: 512Mi  # 512MB RAM
+  cpu: 0.25    # 250m CPU (무료: 0.1, 스타터: 0.25)
+  memory: 512Mi # 512MB RAM (무료: 512Mi, 스타터: 1Gi)
   
-# 스케일링 설정
+# 오토스케일링 설정
 scaling:
   minInstances: 1
-  maxInstances: 1  # 무료 플랜은 1개 인스턴스만 지원
+  maxInstances: 2  # 무료 플랜: 1, 유료 플랜: 확장 가능
+  targetCPUPercent: 70
+  targetMemoryPercent: 80
   
-# 네트워크 설정
+# 네트워크 설정 (보안 강화)
 networking:
   allowedOrigins:
-    - "*"  # CORS 설정은 애플리케이션에서 처리
+    - "https://oseong-club-selection.onrender.com"
+    - "https://osung-club-system.onrender.com"
     
-# 백업 설정 (데이터베이스)
+# 백업 및 재해 복구
 backup:
   enabled: true
   retention: 7  # 7일간 백업 보관
+  schedule: "0 2 * * *"  # 매일 오전 2시 백업
   
-# 모니터링 설정
+# 모니터링 및 알림 (강화됨)
 monitoring:
   enabled: true
   alerts:
     - type: cpu
       threshold: 80
+      duration: 300  # 5분
     - type: memory  
-      threshold: 80
+      threshold: 85
+      duration: 300
     - type: disk
       threshold: 90
+      duration: 60   # 1분
+    - type: response_time
+      threshold: 5000  # 5초
+      duration: 180    # 3분
+    - type: error_rate
+      threshold: 10    # 10%
+      duration: 300
+      
+# 보안 설정 (추가)
+security:
+  # IP 화이트리스트 (필요 시)
+  ipAllowList: []
+  
+  # DDoS 보호
+  ddosProtection:
+    enabled: true
+    rateLimit: 100
+    
+  # SSL/TLS 설정
+  ssl:
+    enforceHttps: true
+    minTlsVersion: "1.2"
+    
+# 개발 및 스테이징 환경 (선택사항)
+environments:
+  - name: staging
+    branch: develop
+    envVars:
+      - key: NODE_ENV
+        value: staging
+      - key: LOG_LEVEL
+        value: debug
+        
+  - name: production
+    branch: main
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: LOG_LEVEL
+        value: info
+
+# 비용 최적화 설정
+costOptimization:
+  # 유휴 시간 슬립 (무료 플랜)
+  sleepAfterInactivity: 15  # 15분 비활성 후 슬립
+  
+  # 리소스 모니터링
+  resourceAlerts:
+    enabled: true
+    cpuThreshold: 90
+    memoryThreshold: 90
+    
+# 배포 전략
+deployment:
+  strategy: rolling  # 무중단 배포
+  maxSurge: 1
+  maxUnavailable: 0
+  
+  # 롤백 설정
+  rollback:
+    enabled: true
+    revisionHistoryLimit: 5
+    
+# 커스텀 도메인 (선택사항)
+# domains:
+#   - name: "club.oseong.school"
+#     certificateId: "cert-xxx"
+
+# 환경별 설정 파일
+configs:
+  - name: app-config
+    files:
+      - source: ./config/production.json
+        destination: /app/config.json
