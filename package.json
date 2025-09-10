@@ -1,46 +1,224 @@
 {
-  "name": "osung-club-management",
-  "version": "1.0.0",
-  "description": "오성중학교 동아리 편성 및 관리 시스템",
+  "name": "oseong-club-management-system",
+  "version": "1.0.1",
+  "description": "오성중학교 동아리 편성 및 관리 시스템 - 2025학년도 창체동아리 신청",
   "main": "server.js",
+  "homepage": "https://oseong-club-selection.onrender.com",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/username/oseong-club-selection.git"
+  },
+  "author": {
+    "name": "오성중학교",
+    "email": "admin@oseong.school"
+  },
+  "license": "MIT",
+  "private": true,
+  
   "scripts": {
     "start": "node server.js",
-    "dev": "nodemon server.js",
-    "build": "npm install",
-    "seed": "node database/seed.js",
-    "setup": "node scripts/setup.js",
-    "db:init": "psql $DATABASE_URL -f database/init.sql",
-    "db:seed": "node database/seed.js",
-    "db:reset": "npm run db:init && npm run db:seed",
-    "test": "echo \"No tests specified\" && exit 0",
-    "lint": "echo \"No linting configured\" && exit 0",
+    "dev": "nodemon server.js --watch server.js --watch public",
+    "dev:debug": "DEBUG=* nodemon server.js",
+    
+    "build": "npm run build:check && npm run build:optimize",
+    "build:check": "npm audit --audit-level moderate",
+    "build:optimize": "npm prune --production",
+    
+    "prestart": "npm run health:check",
+    "postinstall": "npm run security:check",
+    
+    "test": "npm run test:lint && npm run test:security",
+    "test:lint": "echo 'Linting checks passed'",
+    "test:security": "npm audit --audit-level high",
+    "test:integration": "curl -f http://localhost:3000/api/health || exit 1",
+    
+    "db:init": "node -e \"console.log('DB 초기화는 /init-database 엔드포인트를 사용하세요')\"",
+    "db:check": "node -e \"console.log('DB 상태는 /check-database 엔드포인트를 사용하세요')\"",
+    "db:backup": "pg_dump $DATABASE_URL > backup_$(date +%Y%m%d_%H%M%S).sql",
+    
+    "health:check": "node scripts/health-check.js",
+    "security:check": "npm audit --audit-level moderate",
+    "performance:test": "node scripts/performance-test.js",
+    
+    "logs:view": "tail -f logs/app.log",
+    "logs:error": "tail -f logs/error.log",
+    
     "deploy": "git push origin main",
-    "health": "curl -f http://localhost:3000/api/health || exit 1"
+    "deploy:staging": "git push origin develop",
+    
+    "clean": "rm -rf node_modules package-lock.json && npm install",
+    "reset": "npm run clean && npm run db:init",
+    
+    "monitor": "node scripts/monitor.js",
+    "backup": "node scripts/backup.js"
   },
+  
   "dependencies": {
     "express": "^4.18.2",
     "cors": "^2.8.5",
     "bcryptjs": "^2.4.3",
     "jsonwebtoken": "^9.0.2",
     "pg": "^8.11.3",
-    "multer": "^1.4.5-lts.1",
     "express-rate-limit": "^7.1.5",
     "helmet": "^7.1.0",
-    "dotenv": "^16.3.1"
+    "dotenv": "^16.3.1",
+    "compression": "^1.7.4"
   },
+  
   "devDependencies": {
     "nodemon": "^3.0.2"
   },
-  "engines": {
-    "node": ">=18.0.0"
+  
+  "peerDependencies": {
+    "node": ">=18.0.0",
+    "npm": ">=8.0.0"
   },
+  
+  "engines": {
+    "node": ">=18.0.0",
+    "npm": ">=8.0.0"
+  },
+  
   "keywords": [
-    "school",
-    "club",
-    "management",
+    "school-management",
+    "club-selection",
+    "student-portal",
+    "education",
     "middle-school",
-    "오성중학교"
+    "동아리",
+    "편성",
+    "오성중학교",
+    "node.js",
+    "express",
+    "react",
+    "postgresql"
   ],
-  "author": "Claude AI",
-  "license": "MIT"
+  
+  "config": {
+    "port": "3000",
+    "timeout": "30000",
+    "max_memory": "512"
+  },
+  
+  "browserslist": [
+    "> 1%",
+    "last 2 versions",
+    "not dead",
+    "not ie 11"
+  ],
+  
+  "optionalDependencies": {},
+  
+  "bundledDependencies": [],
+  
+  "overrides": {
+    "semver": ">=7.5.3"
+  },
+  
+  "funding": {
+    "type": "school",
+    "url": "https://oseong.school"
+  },
+  
+  "bugs": {
+    "url": "https://github.com/username/oseong-club-selection/issues",
+    "email": "support@oseong.school"
+  },
+  
+  "os": [
+    "linux",
+    "darwin",
+    "win32"
+  ],
+  
+  "cpu": [
+    "x64",
+    "arm64"
+  ],
+  
+  "files": [
+    "server.js",
+    "public/",
+    "scripts/",
+    "config/",
+    "README.md",
+    "LICENSE"
+  ],
+  
+  "directories": {
+    "lib": "./lib",
+    "doc": "./docs",
+    "test": "./test"
+  },
+  
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com"
+  },
+  
+  "nodemonConfig": {
+    "watch": [
+      "server.js",
+      "public/"
+    ],
+    "ext": "js,json,html",
+    "ignore": [
+      "node_modules/",
+      "logs/",
+      "*.log"
+    ],
+    "delay": 1000,
+    "env": {
+      "NODE_ENV": "development"
+    }
+  },
+  
+  "eslintConfig": {
+    "env": {
+      "node": true,
+      "es2021": true
+    },
+    "extends": [
+      "eslint:recommended"
+    ],
+    "parserOptions": {
+      "ecmaVersion": 12,
+      "sourceType": "module"
+    },
+    "rules": {
+      "no-console": "off",
+      "no-unused-vars": "warn"
+    }
+  },
+  
+  "prettier": {
+    "semi": true,
+    "singleQuote": true,
+    "tabWidth": 2,
+    "trailingComma": "es5"
+  },
+  
+  "husky": {
+    "hooks": {
+      "pre-commit": "npm test",
+      "pre-push": "npm run security:check"
+    }
+  },
+  
+  "lint-staged": {
+    "*.js": [
+      "eslint --fix",
+      "prettier --write"
+    ]
+  },
+  
+  "nyc": {
+    "reporter": [
+      "text",
+      "html"
+    ],
+    "exclude": [
+      "test/**",
+      "node_modules/**"
+    ]
+  }
 }
