@@ -10,13 +10,16 @@ const compression = require('compression');
 require('dotenv').config();
 
 const app = express();
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 10000;
+
+// ⭐ Trust Proxy 설정 추가 (문제 해결)
+app.set('trust proxy', 1);
 
 // 환경변수 검증 및 기본값 설정
 const config = {
     JWT_SECRET: process.env.JWT_SECRET || 'oseong-middle-school-2025-super-secret-key',
     ADMIN_PASSWORD: process.env.ADMIN_PASSWORD || 'admin123',
-    INIT_KEY: process.env.INIT_KEY || 'default-init-key',
+    INIT_KEY: process.env.INIT_KEY || 'InitKey2025!@#',
     BCRYPT_SALT_ROUNDS: parseInt(process.env.BCRYPT_SALT_ROUNDS) || 12,
     RATE_LIMIT_MAX_REQUESTS: parseInt(process.env.RATE_LIMIT_MAX_REQUESTS) || 100,
     RATE_LIMIT_WINDOW_MS: parseInt(process.env.RATE_LIMIT_WINDOW_MS) || 15 * 60 * 1000,
@@ -51,7 +54,7 @@ app.use(compression({
 
 // 보안 미들웨어 (CSP 완전 비활성화 - React Babel 호환성을 위해)
 app.use(helmet({
-    contentSecurityPolicy: false,  // CSP 완전 비활성화
+    contentSecurityPolicy: false,
     crossOriginEmbedderPolicy: false,
     hsts: config.NODE_ENV === 'production' ? {
         maxAge: 31536000,
@@ -60,7 +63,7 @@ app.use(helmet({
     } : false
 }));
 
-// Rate limiting 설정
+// ⭐ Rate limiting 설정 개선 (Trust Proxy 적용)
 const createRateLimiter = (windowMs, max, message, skipPaths = []) => {
     return rateLimit({
         windowMs: windowMs || config.RATE_LIMIT_WINDOW_MS,
@@ -68,6 +71,7 @@ const createRateLimiter = (windowMs, max, message, skipPaths = []) => {
         message: { error: message, retryAfter: Math.ceil(windowMs / 1000) },
         standardHeaders: true,
         legacyHeaders: false,
+        trustProxy: true, // Trust Proxy 명시적 설정
         skip: (req) => {
             return skipPaths.includes(req.path) || 
                    req.path.startsWith('/static/') ||
@@ -106,7 +110,7 @@ const corsOptions = {
         ].filter(Boolean);
 
         if (config.NODE_ENV !== 'production') {
-            allowedOrigins.push('http://localhost:3000', 'http://127.0.0.1:3000');
+            allowedOrigins.push('http://localhost:3000', 'http://127.0.0.1:3000', 'http://localhost:10000');
         }
 
         if (!origin) return callback(null, true);
@@ -139,7 +143,7 @@ app.get('/favicon.ico', (req, res) => {
     res.status(204).send();
 });
 
-// 로깅 미들웨어
+// ⭐ 개선된 로깅 미들웨어
 app.use((req, res, next) => {
     const start = Date.now();
     const originalSend = res.send;
@@ -308,6 +312,14 @@ app.get('/init-database', async (req, res) => {
             )
         `);
         
+        // 인덱스 생성 (성능 최적화)
+        await client.query('CREATE INDEX IF NOT EXISTS idx_users_username ON users(username)');
+        await client.query('CREATE INDEX IF NOT EXISTS idx_users_role ON users(role)');
+        await client.query('CREATE INDEX IF NOT EXISTS idx_applications_user_id ON applications(user_id)');
+        await client.query('CREATE INDEX IF NOT EXISTS idx_applications_club_id ON applications(club_id)');
+        await client.query('CREATE INDEX IF NOT EXISTS idx_applications_status ON applications(status)');
+        await client.query('CREATE INDEX IF NOT EXISTS idx_applications_user_priority ON applications(user_id, priority)');
+        
         // 관리자 계정 생성
         const hashedAdminPassword = await bcrypt.hash(config.ADMIN_PASSWORD, config.BCRYPT_SALT_ROUNDS);
         await client.query(
@@ -346,6 +358,7 @@ app.get('/init-database', async (req, res) => {
             message: '데이터베이스가 성공적으로 초기화되었습니다!',
             data: {
                 tables_created: ['users', 'clubs', 'applications'],
+                indexes_created: 6,
                 admin_account: '관리자 계정 생성 완료',
                 sample_clubs: clubs.length + '개 동아리 데이터 추가'
             }
@@ -447,7 +460,7 @@ app.get('/api/health', async (req, res) => {
                 rate_limit: config.RATE_LIMIT_MAX_REQUESTS,
                 bcrypt_rounds: config.BCRYPT_SALT_ROUNDS,
                 log_level: config.LOG_LEVEL,
-                csp_disabled: true  // CSP 비활성화 확인용
+                trust_proxy: true  // Trust Proxy 설정 확인용
             }
         });
         
@@ -473,7 +486,7 @@ app.get('/api/info', (req, res) => {
             bcrypt_rounds: config.BCRYPT_SALT_ROUNDS,
             rate_limit_max: config.RATE_LIMIT_MAX_REQUESTS,
             cors_origin: config.CORS_ORIGIN || 'Not set',
-            csp_disabled: true
+            trust_proxy_enabled: true
         }
     });
 });
@@ -768,7 +781,7 @@ app.post('/api/apply', authenticateToken, async (req, res) => {
         await Promise.all(insertPromises);
         await client.query('COMMIT');
         
-        console.log(`✅ 동아리 신청 완료: ${req.user.name} - ${applications.length}개 지망`);
+        console.log(`✅ 동아리 신청 완료: ${req.user.username} - ${applications.length}개 지망`);
         
         const appliedClubs = clubCheck.rows.map(club => {
             const priority = applications.find(app => app.club_id === club.id)?.priority;
@@ -870,7 +883,15 @@ app.get('/api/admin/applications', authenticateToken, requireAdmin, async (req, 
         
         res.json({
             success: true,
-            applications: result.rows
+            applications: result.rows,
+            summary: {
+                total_applications: result.rows.length,
+                unique_students: new Set(result.rows.map(app => app.user_id)).size,
+                by_status: result.rows.reduce((acc, app) => {
+                    acc[app.status] = (acc[app.status] || 0) + 1;
+                    return acc;
+                }, {})
+            }
         });
         
     } catch (error) {
@@ -886,13 +907,13 @@ app.post('/api/admin/assign-clubs', authenticateToken, requireAdmin, async (req,
     const client = await pool.connect();
     
     try {
-        console.log(`🎯 동아리 배정 시작: ${req.user.name}`);
+        console.log(`🎯 동아리 배정 시작: ${req.user.username}`);
         const startTime = Date.now();
         
         await client.query('BEGIN');
         
         // 모든 신청을 pending으로 초기화
-        await client.query("UPDATE applications SET status = 'pending'");
+        await client.query("UPDATE applications SET status = 'pending', assigned_at = NULL");
         
         let totalAssigned = 0;
         let totalRejected = 0;
@@ -925,7 +946,7 @@ app.post('/api/admin/assign-clubs', authenticateToken, requireAdmin, async (req,
                 if (app.current_assigned < app.max_capacity) {
                     // 배정 가능
                     await client.query(
-                        "UPDATE applications SET status = 'assigned' WHERE user_id = $1 AND club_id = $2",
+                        "UPDATE applications SET status = 'assigned', assigned_at = NOW() WHERE user_id = $1 AND club_id = $2",
                         [app.user_id, app.club_id]
                     );
                     
@@ -960,7 +981,8 @@ app.post('/api/admin/assign-clubs', authenticateToken, requireAdmin, async (req,
             summary: {
                 total_assigned: totalAssigned,
                 total_rejected: totalRejected,
-                assignment_duration_ms: duration
+                assignment_duration_ms: duration,
+                timestamp: new Date().toISOString()
             }
         });
         
@@ -972,6 +994,53 @@ app.post('/api/admin/assign-clubs', authenticateToken, requireAdmin, async (req,
         });
     } finally {
         client.release();
+    }
+});
+
+// 관리자: 통계 정보 조회
+app.get('/api/admin/stats', authenticateToken, requireAdmin, async (req, res) => {
+    try {
+        const [userStats, clubStats, applicationStats] = await Promise.all([
+            dbQuery(`
+                SELECT 
+                    role,
+                    COUNT(*) as count,
+                    COUNT(CASE WHEN last_login > NOW() - INTERVAL '7 days' THEN 1 END) as weekly_active
+                FROM users 
+                GROUP BY role
+            `),
+            dbQuery(`
+                SELECT 
+                    COUNT(*) as total_clubs,
+                    SUM(max_capacity) as total_capacity,
+                    COUNT(DISTINCT category) as categories
+                FROM clubs
+            `),
+            dbQuery(`
+                SELECT 
+                    status,
+                    COUNT(*) as count,
+                    COUNT(DISTINCT user_id) as unique_users
+                FROM applications 
+                GROUP BY status
+            `)
+        ]);
+        
+        res.json({
+            success: true,
+            stats: {
+                users: userStats.rows,
+                clubs: clubStats.rows[0],
+                applications: applicationStats.rows
+            },
+            timestamp: new Date().toISOString()
+        });
+        
+    } catch (error) {
+        console.error('❌ 통계 조회 오류:', error);
+        res.status(500).json({ 
+            error: '통계 정보를 불러오는데 실패했습니다'
+        });
     }
 });
 
@@ -1067,10 +1136,11 @@ process.on('uncaughtException', (error) => {
 
 // 서버 시작
 const server = app.listen(PORT, '0.0.0.0', () => {
+    console.log(`⏰ 서버 시작 시간: ${SYSTEM_INFO.startTime.toISOString()}`);
     console.log(`🚀 ${SYSTEM_INFO.name} v${SYSTEM_INFO.version}`);
     console.log(`📡 서버 실행 중: http://0.0.0.0:${PORT}`);
     console.log(`🌍 환경: ${SYSTEM_INFO.environment}`);
-    console.log(`🔒 보안 기능: CSP 비활성화 (React 호환), Rate Limiting, JWT, bcrypt`);
+    console.log(`🔒 보안 기능: Trust Proxy 활성화, Rate Limiting, JWT, bcrypt`);
     console.log('='.repeat(60));
     console.log('📋 주요 엔드포인트:');
     console.log(`   • 메인 페이지: http://localhost:${PORT}`);
@@ -1083,5 +1153,3 @@ server.on('error', (error) => {
     console.error('❌ 서버 시작 실패:', error);
     process.exit(1);
 });
-
-console.log(`⏰ 서버 시작 시간: ${SYSTEM_INFO.startTime.toISOString()}`);
