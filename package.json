@@ -1,6 +1,6 @@
 {
   "name": "oseong-club-management-system",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "오성중학교 동아리 편성 및 관리 시스템 - 2025학년도 창체동아리 신청",
   "main": "server.js",
   "homepage": "https://oseong-club-selection.onrender.com",
@@ -24,7 +24,7 @@
     "build:check": "npm audit --audit-level moderate",
     "build:optimize": "npm prune --production",
     
-    "prestart": "npm run health:check",
+    "prestart": "node scripts/health-check.js",
     "postinstall": "npm run security:check",
     
     "test": "npm run test:lint && npm run test:security",
@@ -37,6 +37,12 @@
     "db:backup": "pg_dump $DATABASE_URL > backup_$(date +%Y%m%d_%H%M%S).sql",
     
     "health:check": "node scripts/health-check.js",
+    "health:check:dev": "NODE_ENV=development node scripts/health-check.js",
+    "health:check:prod": "NODE_ENV=production node scripts/health-check.js",
+    "health:check:staging": "NODE_ENV=staging node scripts/health-check.js",
+    "health:check:force": "NODE_ENV=development HEALTH_CHECK_FORCE=true node scripts/health-check.js",
+    "health:check:skip": "echo 'Health check skipped' && exit 0",
+    
     "security:check": "npm audit --audit-level moderate",
     "performance:test": "node scripts/performance-test.js",
     
@@ -49,8 +55,12 @@
     "clean": "rm -rf node_modules package-lock.json && npm install",
     "reset": "npm run clean && npm run db:init",
     
-    "monitor": "node scripts/monitor.js",
-    "backup": "node scripts/backup.js"
+    "monitor": "node -e \"console.log('🔍 메모리 모니터링 시작...'); setInterval(() => { const used = process.memoryUsage(); console.log('📊 메모리:', Math.round(used.rss/1024/1024) + 'MB', '| 힙:', Math.round(used.heapUsed/1024/1024) + 'MB', '| 업타임:', Math.round(process.uptime()) + 's'); }, 5000)\"",
+    "monitor:advanced": "node scripts/monitor.js",
+    "monitor:memory": "node --expose-gc -e \"setInterval(() => { if(global.gc) global.gc(); const m = process.memoryUsage(); console.log('Memory: RSS=' + Math.round(m.rss/1024/1024) + 'MB, Heap=' + Math.round(m.heapUsed/1024/1024) + 'MB'); }, 3000)\"",
+    
+    "backup": "node scripts/backup.js",
+    "system:info": "node -e \"console.log('Node.js:', process.version); console.log('Platform:', process.platform, process.arch); console.log('Memory:', Math.round(process.memoryUsage().rss/1024/1024) + 'MB'); console.log('Uptime:', Math.round(process.uptime()) + 's');\""
   },
   
   "dependencies": {
@@ -91,13 +101,35 @@
     "node.js",
     "express",
     "react",
-    "postgresql"
+    "postgresql",
+    "health-check",
+    "monitoring",
+    "render-optimized"
   ],
   
   "config": {
     "port": "3000",
     "timeout": "30000",
-    "max_memory": "512"
+    "max_memory": "512",
+    "health_check": {
+      "timeout": 5000,
+      "retries": 2,
+      "production_enabled": false,
+      "development_enabled": true,
+      "staging_enabled": true,
+      "memory_threshold": 400,
+      "max_execution_time": 30000
+    },
+    "render": {
+      "memory_limit": "512MB",
+      "node_options": "--max-old-space-size=512 --expose-gc",
+      "environment": "production"
+    },
+    "monitoring": {
+      "interval": 5000,
+      "memory_warning_threshold": 400,
+      "memory_critical_threshold": 480
+    }
   },
   
   "browserslist": [
@@ -148,7 +180,9 @@
   "directories": {
     "lib": "./lib",
     "doc": "./docs",
-    "test": "./test"
+    "test": "./test",
+    "logs": "./logs",
+    "scripts": "./scripts"
   },
   
   "publishConfig": {
@@ -158,17 +192,24 @@
   "nodemonConfig": {
     "watch": [
       "server.js",
-      "public/"
+      "public/",
+      "scripts/"
     ],
     "ext": "js,json,html",
     "ignore": [
       "node_modules/",
       "logs/",
-      "*.log"
+      "*.log",
+      "backup_*.sql"
     ],
     "delay": 1000,
     "env": {
-      "NODE_ENV": "development"
+      "NODE_ENV": "development",
+      "DEBUG": "app:*"
+    },
+    "events": {
+      "restart": "echo '🔄 서버 재시작됨'",
+      "crash": "echo '💥 서버 크래시 감지'"
     }
   },
   
@@ -186,7 +227,9 @@
     },
     "rules": {
       "no-console": "off",
-      "no-unused-vars": "warn"
+      "no-unused-vars": "warn",
+      "no-undef": "error",
+      "semi": ["error", "always"]
     }
   },
   
@@ -194,19 +237,25 @@
     "semi": true,
     "singleQuote": true,
     "tabWidth": 2,
-    "trailingComma": "es5"
+    "trailingComma": "es5",
+    "printWidth": 100,
+    "bracketSpacing": true,
+    "arrowParens": "avoid"
   },
   
   "husky": {
     "hooks": {
       "pre-commit": "npm test",
-      "pre-push": "npm run security:check"
+      "pre-push": "npm run security:check && npm run health:check:dev"
     }
   },
   
   "lint-staged": {
     "*.js": [
       "eslint --fix",
+      "prettier --write"
+    ],
+    "*.json": [
       "prettier --write"
     ]
   },
@@ -218,7 +267,57 @@
     ],
     "exclude": [
       "test/**",
-      "node_modules/**"
+      "node_modules/**",
+      "logs/**",
+      "scripts/health-check.js"
     ]
+  },
+  
+  "jest": {
+    "testEnvironment": "node",
+    "collectCoverageFrom": [
+      "**/*.js",
+      "!**/node_modules/**",
+      "!**/logs/**"
+    ]
+  },
+
+  "babel": {
+    "presets": [
+      [
+        "@babel/preset-env",
+        {
+          "targets": {
+            "node": "18"
+          }
+        }
+      ]
+    ]
+  },
+
+  "oseong": {
+    "school": "오성중학교",
+    "year": "2025",
+    "semester": "1학기",
+    "project": "창체동아리신청시스템",
+    "version": "1.0.2",
+    "deployment": {
+      "platform": "render.com",
+      "environment": "production",
+      "health_check_optimized": true,
+      "memory_optimized": true
+    },
+    "features": [
+      "동아리 신청",
+      "편성 관리",
+      "학생 포털",
+      "관리자 대시보드",
+      "실시간 모니터링"
+    ],
+    "support": {
+      "email": "support@oseong.school",
+      "docs": "https://oseong-club-selection.onrender.com/docs",
+      "monitoring": "https://oseong-club-selection.onrender.com/monitoring"
+    }
   }
 }
