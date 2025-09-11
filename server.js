@@ -34,7 +34,7 @@ if (!process.env.DATABASE_URL) {
 // 시스템 정보
 const SYSTEM_INFO = {
     name: '오성중학교 동아리 편성 시스템',
-    version: '1.0.3',
+    version: '1.0.4',
     startTime: new Date(),
     environment: config.NODE_ENV
 };
@@ -49,53 +49,15 @@ app.use(compression({
     threshold: 1024
 }));
 
-// 보안 미들웨어 (CSP 완화)
+// 보안 미들웨어 (CSP 완전 비활성화 - React Babel 호환성을 위해)
 app.use(helmet({
-    contentSecurityPolicy: {
-        directives: {
-            defaultSrc: ["'self'"],
-            scriptSrc: [
-                "'self'",
-                "'unsafe-inline'",
-                "'unsafe-eval'",
-                "https://unpkg.com",
-                "https://cdnjs.cloudflare.com"
-            ],
-            scriptSrcAttr: ["'unsafe-inline'"],
-            styleSrc: [
-                "'self'",
-                "'unsafe-inline'",
-                "https://fonts.googleapis.com",
-                "https://cdnjs.cloudflare.com"
-            ],
-            fontSrc: [
-                "'self'",
-                "https://fonts.gstatic.com",
-                "https://fonts.googleapis.com",
-                "https://cdnjs.cloudflare.com",
-                "data:"
-            ],
-            imgSrc: [
-                "'self'",
-                "data:",
-                "https:",
-                "blob:"
-            ],
-            connectSrc: [
-                "'self'",
-                "https:",
-                "wss:",
-                "ws:"
-            ],
-            frameSrc: ["'none'"],
-            objectSrc: ["'none'"],
-            baseUri: ["'self'"],
-            formAction: ["'self'"],
-            frameAncestors: ["'none'"]
-        },
-        reportOnly: false
-    },
-    crossOriginEmbedderPolicy: false
+    contentSecurityPolicy: false,  // CSP 완전 비활성화
+    crossOriginEmbedderPolicy: false,
+    hsts: config.NODE_ENV === 'production' ? {
+        maxAge: 31536000,
+        includeSubDomains: true,
+        preload: true
+    } : false
 }));
 
 // Rate limiting 설정
@@ -484,7 +446,8 @@ app.get('/api/health', async (req, res) => {
                 cors_origin: config.CORS_ORIGIN,
                 rate_limit: config.RATE_LIMIT_MAX_REQUESTS,
                 bcrypt_rounds: config.BCRYPT_SALT_ROUNDS,
-                log_level: config.LOG_LEVEL
+                log_level: config.LOG_LEVEL,
+                csp_disabled: true  // CSP 비활성화 확인용
             }
         });
         
@@ -509,7 +472,8 @@ app.get('/api/info', (req, res) => {
         config: {
             bcrypt_rounds: config.BCRYPT_SALT_ROUNDS,
             rate_limit_max: config.RATE_LIMIT_MAX_REQUESTS,
-            cors_origin: config.CORS_ORIGIN || 'Not set'
+            cors_origin: config.CORS_ORIGIN || 'Not set',
+            csp_disabled: true
         }
     });
 });
@@ -1064,12 +1028,49 @@ app.get('*', (req, res) => {
     });
 });
 
+// Graceful shutdown
+const gracefulShutdown = async (signal) => {
+    console.log(`🛑 ${signal} 신호 받음, 서버를 안전하게 종료합니다...`);
+    
+    server.close(async () => {
+        console.log('📡 HTTP 서버 종료됨');
+        
+        try {
+            await pool.end();
+            console.log('📂 데이터베이스 연결 풀 종료됨');
+            console.log('✅ 안전한 종료 완료');
+            process.exit(0);
+        } catch (error) {
+            console.error('❌ 종료 중 오류:', error);
+            process.exit(1);
+        }
+    });
+    
+    setTimeout(() => {
+        console.error('⏰ 종료 시간 초과, 강제 종료합니다');
+        process.exit(1);
+    }, 30000);
+};
+
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+
+// 처리되지 않은 Promise rejection 핸들링
+process.on('unhandledRejection', (reason, promise) => {
+    console.error('🚨 처리되지 않은 Promise Rejection:', reason);
+});
+
+process.on('uncaughtException', (error) => {
+    console.error('🚨 처리되지 않은 Exception:', error.message);
+    gracefulShutdown('UNCAUGHT_EXCEPTION');
+});
+
 // 서버 시작
 const server = app.listen(PORT, '0.0.0.0', () => {
     console.log(`🚀 ${SYSTEM_INFO.name} v${SYSTEM_INFO.version}`);
     console.log(`📡 서버 실행 중: http://0.0.0.0:${PORT}`);
     console.log(`🌍 환경: ${SYSTEM_INFO.environment}`);
-    console.log(`🔒 보안 기능: CSP 완화, Rate Limiting, JWT, bcrypt`);
+    console.log(`🔒 보안 기능: CSP 비활성화 (React 호환), Rate Limiting, JWT, bcrypt`);
     console.log('='.repeat(60));
     console.log('📋 주요 엔드포인트:');
     console.log(`   • 메인 페이지: http://localhost:${PORT}`);
