@@ -997,49 +997,280 @@ app.post('/api/admin/assign-clubs', authenticateToken, requireAdmin, async (req,
     }
 });
 
-// 관리자: 통계 정보 조회
+// 관리자: 통계 정보 조회 (개선된 버전)
 app.get('/api/admin/stats', authenticateToken, requireAdmin, async (req, res) => {
     try {
-        const [userStats, clubStats, applicationStats] = await Promise.all([
+        const [userStats, clubStats, applicationStats, assignmentStats] = await Promise.all([
             dbQuery(`
                 SELECT 
                     role,
                     COUNT(*) as count,
-                    COUNT(CASE WHEN last_login > NOW() - INTERVAL '7 days' THEN 1 END) as weekly_active
+                    COUNT(CASE WHEN last_login > NOW() - INTERVAL '7 days' THEN 1 END) as weekly_active,
+                    COUNT(CASE WHEN last_login > NOW() - INTERVAL '24 hours' THEN 1 END) as daily_active,
+                    COUNT(CASE WHEN created_at > NOW() - INTERVAL '7 days' THEN 1 END) as new_this_week
                 FROM users 
                 GROUP BY role
+                ORDER BY role
             `),
             dbQuery(`
                 SELECT 
                     COUNT(*) as total_clubs,
                     SUM(max_capacity) as total_capacity,
-                    COUNT(DISTINCT category) as categories
+                    COUNT(DISTINCT category) as categories,
+                    AVG(max_capacity) as avg_capacity,
+                    MIN(max_capacity) as min_capacity,
+                    MAX(max_capacity) as max_capacity
                 FROM clubs
             `),
             dbQuery(`
                 SELECT 
                     status,
                     COUNT(*) as count,
-                    COUNT(DISTINCT user_id) as unique_users
+                    COUNT(DISTINCT user_id) as unique_users,
+                    COUNT(DISTINCT club_id) as unique_clubs,
+                    ROUND(AVG(priority), 2) as avg_priority
                 FROM applications 
                 GROUP BY status
+                ORDER BY 
+                    CASE status 
+                        WHEN 'assigned' THEN 1 
+                        WHEN 'pending' THEN 2 
+                        WHEN 'rejected' THEN 3 
+                    END
+            `),
+            dbQuery(`
+                SELECT 
+                    c.name as club_name,
+                    c.category,
+                    c.max_capacity,
+                    COUNT(a.id) as total_applications,
+                    COUNT(CASE WHEN a.status = 'assigned' THEN 1 END) as assigned_count,
+                    COUNT(CASE WHEN a.status = 'pending' THEN 1 END) as pending_count,
+                    ROUND(
+                        (COUNT(CASE WHEN a.status = 'assigned' THEN 1 END)::float / 
+                         NULLIF(c.max_capacity, 0)) * 100, 
+                        2
+                    ) as fill_rate
+                FROM clubs c
+                LEFT JOIN applications a ON c.id = a.club_id
+                GROUP BY c.id, c.name, c.category, c.max_capacity
+                ORDER BY total_applications DESC
             `)
         ]);
+        
+        // 배정 완료율 계산
+        const totalStudents = userStats.rows.find(u => u.role === 'student')?.count || 0;
+        const assignedStudents = applicationStats.rows.find(a => a.status === 'assigned')?.unique_users || 0;
+        const assignmentRate = totalStudents > 0 ? Math.round((assignedStudents / totalStudents) * 100) : 0;
+        
+        // 인기 동아리 Top 5
+        const popularClubs = assignmentStats.rows.slice(0, 5);
+        
+        // 카테고리별 통계
+        const categoryStats = assignmentStats.rows.reduce((acc, club) => {
+            const category = club.category || '기타';
+            if (!acc[category]) {
+                acc[category] = {
+                    clubs: 0,
+                    total_capacity: 0,
+                    total_applications: 0,
+                    assigned_count: 0
+                };
+            }
+            acc[category].clubs++;
+            acc[category].total_capacity += club.max_capacity;
+            acc[category].total_applications += parseInt(club.total_applications);
+            acc[category].assigned_count += parseInt(club.assigned_count);
+            return acc;
+        }, {});
         
         res.json({
             success: true,
             stats: {
                 users: userStats.rows,
                 clubs: clubStats.rows[0],
-                applications: applicationStats.rows
+                applications: applicationStats.rows,
+                assignment_summary: {
+                    total_students: parseInt(totalStudents),
+                    assigned_students: parseInt(assignedStudents),
+                    assignment_rate: assignmentRate,
+                    unassigned_students: parseInt(totalStudents) - parseInt(assignedStudents)
+                }
             },
-            timestamp: new Date().toISOString()
+            detailed_stats: {
+                popular_clubs: popularClubs,
+                category_breakdown: categoryStats,
+                club_details: assignmentStats.rows
+            },
+            system_info: {
+                timestamp: new Date().toISOString(),
+                server_uptime: Math.floor(process.uptime()),
+                memory_usage: Math.round(process.memoryUsage().heapUsed / 1024 / 1024) + 'MB'
+            }
         });
         
     } catch (error) {
         console.error('❌ 통계 조회 오류:', error);
         res.status(500).json({ 
-            error: '통계 정보를 불러오는데 실패했습니다'
+            error: '통계 정보를 불러오는데 실패했습니다',
+            details: process.env.NODE_ENV === 'development' ? error.message : undefined
+        });
+    }
+});
+
+// 배정 상태 실시간 조회 (새로운 엔드포인트)
+app.get('/api/admin/assignment-status', authenticateToken, requireAdmin, async (req, res) => {
+    try {
+        const [overallStatus, clubStatus, studentStatus] = await Promise.all([
+            // 전체 배정 현황
+            dbQuery(`
+                SELECT 
+                    COUNT(DISTINCT u.id) as total_students,
+                    COUNT(DISTINCT CASE WHEN a.status = 'assigned' THEN a.user_id END) as assigned_students,
+                    COUNT(DISTINCT CASE WHEN a.status = 'pending' THEN a.user_id END) as pending_students,
+                    COUNT(DISTINCT CASE WHEN a.user_id IS NULL THEN u.id END) as no_application_students
+                FROM users u
+                LEFT JOIN applications a ON u.id = a.user_id
+                WHERE u.role = 'student'
+            `),
+            // 동아리별 현황
+            dbQuery(`
+                SELECT 
+                    c.id,
+                    c.name,
+                    c.max_capacity,
+                    COUNT(CASE WHEN a.status = 'assigned' THEN 1 END) as assigned_count,
+                    COUNT(CASE WHEN a.status = 'pending' THEN 1 END) as pending_count,
+                    COUNT(a.id) as total_applications,
+                    CASE 
+                        WHEN COUNT(CASE WHEN a.status = 'assigned' THEN 1 END) >= c.max_capacity THEN 'full'
+                        WHEN COUNT(CASE WHEN a.status = 'assigned' THEN 1 END) >= c.max_capacity * 0.8 THEN 'near_full'
+                        ELSE 'available'
+                    END as status
+                FROM clubs c
+                LEFT JOIN applications a ON c.id = a.club_id
+                GROUP BY c.id, c.name, c.max_capacity
+                ORDER BY assigned_count DESC, c.name
+            `),
+            // 미배정 학생 목록
+            dbQuery(`
+                SELECT 
+                    u.name,
+                    u.username,
+                    u.class_info,
+                    COUNT(a.id) as application_count,
+                    STRING_AGG(
+                        CONCAT(cl.name, ' (', a.priority, '지망)'), 
+                        ', ' ORDER BY a.priority
+                    ) as applied_clubs
+                FROM users u
+                LEFT JOIN applications a ON u.id = a.user_id AND a.status != 'assigned'
+                LEFT JOIN clubs cl ON a.club_id = cl.id
+                WHERE u.role = 'student'
+                AND u.id NOT IN (
+                    SELECT user_id FROM applications WHERE status = 'assigned'
+                )
+                GROUP BY u.id, u.name, u.username, u.class_info
+                ORDER BY u.class_info, u.name
+                LIMIT 20
+            `)
+        ]);
+        
+        const overall = overallStatus.rows[0];
+        const assignmentRate = overall.total_students > 0 ? 
+            Math.round((overall.assigned_students / overall.total_students) * 100) : 0;
+        
+        res.json({
+            success: true,
+            assignment_status: {
+                overall: {
+                    ...overall,
+                    assignment_rate: assignmentRate
+                },
+                clubs: clubStatus.rows,
+                unassigned_students: studentStatus.rows,
+                summary: {
+                    clubs_full: clubStatus.rows.filter(c => c.status === 'full').length,
+                    clubs_near_full: clubStatus.rows.filter(c => c.status === 'near_full').length,
+                    clubs_available: clubStatus.rows.filter(c => c.status === 'available').length,
+                    total_unassigned: parseInt(overall.total_students) - parseInt(overall.assigned_students)
+                }
+            },
+            timestamp: new Date().toISOString()
+        });
+        
+    } catch (error) {
+        console.error('❌ 배정 상태 조회 오류:', error);
+        res.status(500).json({ 
+            error: '배정 상태를 불러오는데 실패했습니다',
+            details: process.env.NODE_ENV === 'development' ? error.message : undefined
+        });
+    }
+});
+
+// 배정 이력 조회 (새로운 엔드포인트)
+app.get('/api/admin/assignment-history', authenticateToken, requireAdmin, async (req, res) => {
+    try {
+        const recentAssignments = await dbQuery(`
+            SELECT 
+                u.name as student_name,
+                u.username as student_id,
+                u.class_info,
+                c.name as club_name,
+                c.category,
+                a.priority,
+                a.applied_at,
+                a.assigned_at,
+                CASE a.priority
+                    WHEN 1 THEN '1지망'
+                    WHEN 2 THEN '2지망'
+                    WHEN 3 THEN '3지망'
+                    ELSE CONCAT(a.priority, '지망')
+                END as priority_text
+            FROM applications a
+            JOIN users u ON a.user_id = u.id
+            JOIN clubs c ON a.club_id = c.id
+            WHERE a.status = 'assigned'
+            ORDER BY a.assigned_at DESC, u.class_info, u.name
+            LIMIT 100
+        `);
+        
+        // 지망별 성공률 계산
+        const priorityStats = await dbQuery(`
+            SELECT 
+                priority,
+                COUNT(*) as total_applied,
+                COUNT(CASE WHEN status = 'assigned' THEN 1 END) as assigned_count,
+                ROUND(
+                    (COUNT(CASE WHEN status = 'assigned' THEN 1 END)::float / COUNT(*)) * 100, 
+                    2
+                ) as success_rate
+            FROM applications
+            GROUP BY priority
+            ORDER BY priority
+        `);
+        
+        res.json({
+            success: true,
+            assignment_history: recentAssignments.rows,
+            priority_statistics: priorityStats.rows,
+            summary: {
+                total_assignments: recentAssignments.rows.length,
+                by_priority: {
+                    first_choice: recentAssignments.rows.filter(a => a.priority === 1).length,
+                    second_choice: recentAssignments.rows.filter(a => a.priority === 2).length,
+                    third_choice: recentAssignments.rows.filter(a => a.priority === 3).length
+                },
+                recent_assignment_time: recentAssignments.rows[0]?.assigned_at || null
+            },
+            timestamp: new Date().toISOString()
+        });
+        
+    } catch (error) {
+        console.error('❌ 배정 이력 조회 오류:', error);
+        res.status(500).json({ 
+            error: '배정 이력을 불러오는데 실패했습니다',
+            details: process.env.NODE_ENV === 'development' ? error.message : undefined
         });
     }
 });
