@@ -12,10 +12,10 @@ require('dotenv').config();
 const app = express();
 const PORT = process.env.PORT || 10000;
 
-// ⭐ Trust Proxy 설정 (Render.com 최적화)
+// Trust Proxy 설정 (Render.com 최적화)
 app.set('trust proxy', 1);
 
-// ⭐ Keep-Alive 설정 (Sleep 모드 방지 도움)
+// Keep-Alive 설정 (Sleep 모드 방지 도움)
 app.use((req, res, next) => {
     res.setHeader('Connection', 'keep-alive');
     res.setHeader('Keep-Alive', 'timeout=60, max=1000');
@@ -37,7 +37,7 @@ const config = {
 
 // 필수 환경변수 검증
 if (!process.env.DATABASE_URL) {
-    console.error('❌ DATABASE_URL 환경변수가 설정되지 않았습니다.');
+    console.error('DATABASE_URL 환경변수가 설정되지 않았습니다.');
     process.exit(1);
 }
 
@@ -53,7 +53,7 @@ console.log(`🚀 ${SYSTEM_INFO.name} v${SYSTEM_INFO.version} 시작`);
 console.log(`📅 시작 시간: ${SYSTEM_INFO.startTime.toISOString()}`);
 console.log(`🌍 환경: ${SYSTEM_INFO.environment}`);
 
-// ⭐ 메모리 최적화를 위한 가비지 컬렉션 모니터링
+// 메모리 최적화를 위한 가비지 컬렉션 모니터링
 if (global.gc) {
     setInterval(() => {
         const memBefore = process.memoryUsage().heapUsed;
@@ -65,7 +65,7 @@ if (global.gc) {
     }, 30000); // 30초마다
 }
 
-// ⭐ 메모리 사용량 모니터링
+// 메모리 사용량 모니터링
 setInterval(() => {
     const mem = process.memoryUsage();
     const rssInMB = Math.round(mem.rss / 1024 / 1024);
@@ -102,7 +102,7 @@ app.use(helmet({
     } : false
 }));
 
-// ⭐ Rate limiting 설정 개선 (Trust Proxy 적용)
+// Rate limiting 설정 개선 (Trust Proxy 적용)
 const createRateLimiter = (windowMs, max, message, skipPaths = []) => {
     return rateLimit({
         windowMs: windowMs || config.RATE_LIMIT_WINDOW_MS,
@@ -198,7 +198,7 @@ app.get('/favicon.ico', (req, res) => {
     res.status(204).send();
 });
 
-// ⭐ 개선된 로깅 미들웨어
+// 개선된 로깅 미들웨어
 app.use((req, res, next) => {
     const start = Date.now();
     const originalSend = res.send;
@@ -242,7 +242,7 @@ const pool = new Pool({
     keepAliveInitialDelayMillis: 10000
 });
 
-// ⭐ 데이터베이스 연결 상태 모니터링
+// 데이터베이스 연결 상태 모니터링
 pool.on('connect', () => {
     if (config.LOG_LEVEL === 'debug') {
         console.log('📗 데이터베이스 연결 생성됨');
@@ -333,7 +333,7 @@ const dbQuery = async (query, params = [], retries = 2) => {
     throw lastError;
 };
 
-// ============= ⭐ 개선된 헬스체크 및 모니터링 API =============
+// ============= 개선된 헬스체크 및 모니터링 API =============
 
 // 헬스체크 (더 상세한 정보 제공)
 app.get('/api/health', async (req, res) => {
@@ -347,7 +347,7 @@ app.get('/api/health', async (req, res) => {
         const uptime = process.uptime();
         const memory = process.memoryUsage();
         
-        // ⭐ 시스템 상태 계산
+        // 시스템 상태 계산
         const memoryUsageMB = Math.round(memory.rss / 1024 / 1024);
         const heapUsageMB = Math.round(memory.heapUsed / 1024 / 1024);
         
@@ -385,25 +385,6 @@ app.get('/api/health', async (req, res) => {
                 heap_used_mb: heapUsageMB,
                 heap_total_mb: Math.round(memory.heapTotal / 1024 / 1024),
                 external_mb: Math.round(memory.external / 1024 / 1024)
-            },
-            system: {
-                platform: process.platform,
-                arch: process.arch,
-                node_version: process.version,
-                pid: process.pid,
-                cpu_usage: process.cpuUsage()
-            },
-            config: {
-                cors_origin: config.CORS_ORIGIN || 'default',
-                rate_limit: config.RATE_LIMIT_MAX_REQUESTS,
-                bcrypt_rounds: config.BCRYPT_SALT_ROUNDS,
-                log_level: config.LOG_LEVEL,
-                trust_proxy: true
-            },
-            render_info: {
-                external_url: process.env.RENDER_EXTERNAL_URL,
-                service_name: process.env.RENDER_SERVICE_NAME,
-                git_commit: process.env.RENDER_GIT_COMMIT?.substring(0, 7)
             }
         });
         
@@ -422,59 +403,7 @@ app.get('/api/health', async (req, res) => {
     }
 });
 
-// ⭐ 시스템 모니터링 엔드포인트 (새로 추가)
-app.get('/api/system-status', async (req, res) => {
-    try {
-        const memory = process.memoryUsage();
-        const cpuUsage = process.cpuUsage();
-        
-        // 최근 1분간의 평균 응답 시간 (간단한 구현)
-        const recentResponseTimes = app.locals.recentResponseTimes || [];
-        const avgResponseTime = recentResponseTimes.length > 0 ? 
-            recentResponseTimes.reduce((a, b) => a + b, 0) / recentResponseTimes.length : 0;
-        
-        res.json({
-            timestamp: new Date().toISOString(),
-            system: {
-                uptime: process.uptime(),
-                memory: {
-                    rss: memory.rss,
-                    heapTotal: memory.heapTotal,
-                    heapUsed: memory.heapUsed,
-                    external: memory.external,
-                    arrayBuffers: memory.arrayBuffers
-                },
-                cpu: cpuUsage,
-                load: {
-                    // Node.js에서는 os.loadavg()를 사용할 수 있지만 여기서는 단순화
-                    avg_response_time_ms: Math.round(avgResponseTime)
-                }
-            },
-            process: {
-                pid: process.pid,
-                ppid: process.ppid,
-                platform: process.platform,
-                arch: process.arch,
-                version: process.version,
-                title: process.title
-            },
-            database: {
-                pool_total: pool.totalCount,
-                pool_idle: pool.idleCount,
-                pool_waiting: pool.waitingCount
-            }
-        });
-        
-    } catch (error) {
-        console.error('❌ 시스템 상태 조회 오류:', error);
-        res.status(500).json({
-            error: '시스템 상태를 조회할 수 없습니다',
-            details: config.NODE_ENV === 'development' ? error.message : undefined
-        });
-    }
-});
-
-// ⭐ Keep-Alive 엔드포인트 (Sleep 모드 방지)
+// Keep-Alive 엔드포인트 (Sleep 모드 방지)
 app.get('/keep-alive', (req, res) => {
     res.json({
         status: 'awake',
@@ -766,7 +695,6 @@ app.get('/api/info', (req, res) => {
         ],
         endpoints: {
             health: '/api/health',
-            system: '/api/system-status',
             database: '/check-database',
             init: '/init-database',
             keepalive: '/keep-alive'
@@ -1301,38 +1229,64 @@ app.post('/api/admin/assign-clubs', authenticateToken, requireAdmin, async (req,
     }
 });
 
-// 관리자: 통계 정보 조회
+// ============= 🔧 관리자: 통계 정보 조회 (수정된 버전) =============
 app.get('/api/admin/stats', authenticateToken, requireAdmin, async (req, res) => {
     try {
-        const [userStats, clubStats, applicationStats, assignmentStats] = await Promise.all([
-            dbQuery(`
+        console.log('📊 관리자 통계 요청:', req.user.username);
+        
+        // 각각의 쿼리를 개별적으로 실행하여 에러 위치 파악 및 안전한 처리
+        let userStats = { rows: [] };
+        let clubStats = { rows: [{ total_clubs: 0, total_capacity: 0, categories: 0, avg_capacity: 0, min_capacity: 0, max_capacity: 0 }] };
+        let applicationStats = { rows: [] };
+        let assignmentStats = { rows: [] };
+        
+        // 1. 사용자 통계 조회
+        try {
+            userStats = await dbQuery(`
                 SELECT 
                     role,
                     COUNT(*) as count,
                     COUNT(CASE WHEN last_login > NOW() - INTERVAL '7 days' THEN 1 END) as weekly_active,
-                    COUNT(CASE WHEN last_login > NOW() - INTERVAL '24 hours' THEN 1 END) as daily_active,
+                    COUNT(CASE WHEN last_login > NOW() - INTERVAL '1 day' THEN 1 END) as daily_active,
                     COUNT(CASE WHEN created_at > NOW() - INTERVAL '7 days' THEN 1 END) as new_this_week
                 FROM users 
                 GROUP BY role
                 ORDER BY role
-            `),
-            dbQuery(`
+            `);
+            console.log('✅ 사용자 통계 조회 성공:', userStats.rows.length, '개 역할');
+        } catch (error) {
+            console.error('❌ 사용자 통계 조회 오류:', error.message);
+            // 기본값으로 계속 진행
+            userStats = { rows: [{ role: 'student', count: 0, weekly_active: 0, daily_active: 0, new_this_week: 0 }] };
+        }
+        
+        // 2. 동아리 통계 조회
+        try {
+            clubStats = await dbQuery(`
                 SELECT 
                     COUNT(*) as total_clubs,
-                    SUM(max_capacity) as total_capacity,
-                    COUNT(DISTINCT category) as categories,
-                    AVG(max_capacity) as avg_capacity,
-                    MIN(max_capacity) as min_capacity,
-                    MAX(max_capacity) as max_capacity
+                    COALESCE(SUM(max_capacity), 0) as total_capacity,
+                    COUNT(DISTINCT COALESCE(category, '일반 활동')) as categories,
+                    COALESCE(ROUND(AVG(max_capacity), 2), 0) as avg_capacity,
+                    COALESCE(MIN(max_capacity), 0) as min_capacity,
+                    COALESCE(MAX(max_capacity), 0) as max_capacity
                 FROM clubs
-            `),
-            dbQuery(`
+            `);
+            console.log('✅ 동아리 통계 조회 성공:', clubStats.rows[0].total_clubs, '개 동아리');
+        } catch (error) {
+            console.error('❌ 동아리 통계 조회 오류:', error.message);
+            // 기본값 유지
+        }
+        
+        // 3. 신청 통계 조회
+        try {
+            applicationStats = await dbQuery(`
                 SELECT 
                     status,
                     COUNT(*) as count,
                     COUNT(DISTINCT user_id) as unique_users,
                     COUNT(DISTINCT club_id) as unique_clubs,
-                    ROUND(AVG(priority), 2) as avg_priority
+                    COALESCE(ROUND(AVG(priority), 2), 0) as avg_priority
                 FROM applications 
                 GROUP BY status
                 ORDER BY 
@@ -1340,65 +1294,86 @@ app.get('/api/admin/stats', authenticateToken, requireAdmin, async (req, res) =>
                         WHEN 'assigned' THEN 1 
                         WHEN 'pending' THEN 2 
                         WHEN 'rejected' THEN 3 
+                        ELSE 4
                     END
-            `),
-            dbQuery(`
+            `);
+            console.log('✅ 신청 통계 조회 성공:', applicationStats.rows.length, '개 상태');
+        } catch (error) {
+            console.error('❌ 신청 통계 조회 오류:', error.message);
+            // 기본값으로 계속 진행
+            applicationStats = { rows: [] };
+        }
+        
+        // 4. 동아리별 배정 통계 조회
+        try {
+            assignmentStats = await dbQuery(`
                 SELECT 
                     c.name as club_name,
-                    c.category,
+                    COALESCE(c.category, '일반 활동') as category,
                     c.max_capacity,
                     COUNT(a.id) as total_applications,
                     COUNT(CASE WHEN a.status = 'assigned' THEN 1 END) as assigned_count,
                     COUNT(CASE WHEN a.status = 'pending' THEN 1 END) as pending_count,
-                    ROUND(
-                        (COUNT(CASE WHEN a.status = 'assigned' THEN 1 END)::float / 
-                         NULLIF(c.max_capacity, 0)) * 100, 
-                        2
+                    COALESCE(
+                        ROUND(
+                            (COUNT(CASE WHEN a.status = 'assigned' THEN 1 END)::float / 
+                             NULLIF(c.max_capacity, 0)) * 100, 
+                            2
+                        ), 
+                        0
                     ) as fill_rate
                 FROM clubs c
                 LEFT JOIN applications a ON c.id = a.club_id
                 GROUP BY c.id, c.name, c.category, c.max_capacity
-                ORDER BY total_applications DESC
-            `)
-        ]);
+                ORDER BY total_applications DESC NULLS LAST
+            `);
+            console.log('✅ 배정 통계 조회 성공:', assignmentStats.rows.length, '개 동아리');
+        } catch (error) {
+            console.error('❌ 배정 통계 조회 오류:', error.message);
+            // 기본값으로 계속 진행
+            assignmentStats = { rows: [] };
+        }
         
-        // 배정 완료율 계산
+        // 안전한 데이터 처리
         const totalStudents = userStats.rows.find(u => u.role === 'student')?.count || 0;
         const assignedStudents = applicationStats.rows.find(a => a.status === 'assigned')?.unique_users || 0;
         const assignmentRate = totalStudents > 0 ? Math.round((assignedStudents / totalStudents) * 100) : 0;
         
         // 인기 동아리 Top 5
-        const popularClubs = assignmentStats.rows.slice(0, 5);
+        const popularClubs = assignmentStats.rows
+            .filter(club => parseInt(club.total_applications) > 0)
+            .slice(0, 5);
         
-        // 카테고리별 통계
-        const categoryStats = assignmentStats.rows.reduce((acc, club) => {
+        // 카테고리별 통계 계산
+        const categoryStats = {};
+        assignmentStats.rows.forEach(club => {
             const category = club.category || '기타';
-            if (!acc[category]) {
-                acc[category] = {
+            if (!categoryStats[category]) {
+                categoryStats[category] = {
                     clubs: 0,
                     total_capacity: 0,
                     total_applications: 0,
                     assigned_count: 0
                 };
             }
-            acc[category].clubs++;
-            acc[category].total_capacity += club.max_capacity;
-            acc[category].total_applications += parseInt(club.total_applications);
-            acc[category].assigned_count += parseInt(club.assigned_count);
-            return acc;
-        }, {});
+            categoryStats[category].clubs++;
+            categoryStats[category].total_capacity += parseInt(club.max_capacity) || 0;
+            categoryStats[category].total_applications += parseInt(club.total_applications) || 0;
+            categoryStats[category].assigned_count += parseInt(club.assigned_count) || 0;
+        });
         
-        res.json({
+        // 응답 데이터 구성
+        const responseData = {
             success: true,
             stats: {
                 users: userStats.rows,
-                clubs: clubStats.rows[0],
+                clubs: clubStats.rows[0] || { total_clubs: 0, total_capacity: 0 },
                 applications: applicationStats.rows,
                 assignment_summary: {
-                    total_students: parseInt(totalStudents),
-                    assigned_students: parseInt(assignedStudents),
+                    total_students: parseInt(totalStudents) || 0,
+                    assigned_students: parseInt(assignedStudents) || 0,
                     assignment_rate: assignmentRate,
-                    unassigned_students: parseInt(totalStudents) - parseInt(assignedStudents)
+                    unassigned_students: Math.max(0, parseInt(totalStudents) - parseInt(assignedStudents))
                 }
             },
             detailed_stats: {
@@ -1409,15 +1384,38 @@ app.get('/api/admin/stats', authenticateToken, requireAdmin, async (req, res) =>
             system_info: {
                 timestamp: new Date().toISOString(),
                 server_uptime: Math.floor(process.uptime()),
-                memory_usage_mb: Math.round(process.memoryUsage().heapUsed / 1024 / 1024)
+                memory_usage_mb: Math.round(process.memoryUsage().heapUsed / 1024 / 1024),
+                database_pool: {
+                    total: pool.totalCount,
+                    idle: pool.idleCount,
+                    waiting: pool.waitingCount
+                }
             }
-        });
+        };
+        
+        console.log('✅ 관리자 통계 조회 성공 - 학생:', totalStudents, '명, 배정:', assignedStudents, '명');
+        res.json(responseData);
         
     } catch (error) {
-        console.error('❌ 통계 조회 오류:', error);
+        console.error('❌ 관리자 통계 조회 전체 오류:', error);
+        
+        // 최후 수단으로 기본 응답 제공
         res.status(500).json({ 
+            success: false,
             error: '통계 정보를 불러오는데 실패했습니다',
-            details: config.NODE_ENV === 'development' ? error.message : undefined
+            details: config.NODE_ENV === 'development' ? error.message : 'Internal server error',
+            timestamp: new Date().toISOString(),
+            fallback_stats: {
+                users: [{ role: 'student', count: 0 }],
+                clubs: { total_clubs: 0, total_capacity: 0 },
+                applications: [],
+                assignment_summary: {
+                    total_students: 0,
+                    assigned_students: 0,
+                    assignment_rate: 0,
+                    unassigned_students: 0
+                }
+            }
         });
     }
 });
@@ -1432,7 +1430,7 @@ app.use('/api/*', (req, res) => {
         error: '요청하신 API 엔드포인트를 찾을 수 없습니다',
         requested_path: req.originalUrl,
         available_endpoints: [
-            '/api/health', '/api/info', '/api/system-status',
+            '/api/health', '/api/info',
             '/api/login', '/api/register', '/api/clubs',
             '/api/apply', '/api/my-applications',
             '/api/admin/applications', '/api/admin/assign-clubs', '/api/admin/stats'
@@ -1502,7 +1500,7 @@ app.get('*', (req, res) => {
     });
 });
 
-// ⭐ Graceful shutdown 개선
+// Graceful shutdown 개선
 const gracefulShutdown = async (signal) => {
     console.log(`🛑 ${signal} 신호 받음, 서버를 안전하게 종료합니다...`);
     
@@ -1540,7 +1538,7 @@ process.on('uncaughtException', (error) => {
     gracefulShutdown('UNCAUGHT_EXCEPTION');
 });
 
-// ⭐ 서버 시작
+// 서버 시작
 const server = app.listen(PORT, '0.0.0.0', () => {
     console.log('='.repeat(60));
     console.log(`⏰ 서버 시작 시간: ${SYSTEM_INFO.startTime.toISOString()}`);
@@ -1553,7 +1551,6 @@ const server = app.listen(PORT, '0.0.0.0', () => {
     console.log('📋 주요 엔드포인트:');
     console.log(`   • 메인 페이지: http://localhost:${PORT}`);
     console.log(`   • 헬스체크: http://localhost:${PORT}/api/health`);
-    console.log(`   • 시스템 모니터링: http://localhost:${PORT}/api/system-status`);
     console.log(`   • DB 상태 확인: http://localhost:${PORT}/check-database`);
     console.log(`   • DB 초기화: http://localhost:${PORT}/init-database?key=${config.INIT_KEY}`);
     console.log(`   • Keep-Alive: http://localhost:${PORT}/keep-alive`);
@@ -1565,7 +1562,7 @@ server.on('error', (error) => {
     process.exit(1);
 });
 
-// ⭐ 서버 시작 완료 후 자체 헬스체크
+// 서버 시작 완료 후 자체 헬스체크
 setTimeout(async () => {
     try {
         const http = require('http');
