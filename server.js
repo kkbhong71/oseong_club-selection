@@ -1422,7 +1422,7 @@ app.get('/api/admin/stats', authenticateToken, requireAdmin, async (req, res) =>
 
 // ============= 🆕 새로운 API: 배정 결과 출력 기능 =============
 
-// 관리자: 배정 결과 출력 (CSV/TXT 다운로드)
+// 관리자: 배정 결과 출력 (CSV/TXT 다운로드) - 수정된 버전
 app.get('/api/admin/export-results', authenticateToken, requireAdmin, async (req, res) => {
     try {
         const { sortBy = 'student_id', format = 'csv' } = req.query;
@@ -1469,7 +1469,7 @@ app.get('/api/admin/export-results', authenticateToken, requireAdmin, async (req
         }
         
         const timestamp = new Date().toISOString().slice(0, 19).replace(/[:-]/g, '');
-        const sortLabel = sortBy === 'student_id' ? '학번순' : '동아리순';
+        const sortLabel = sortBy === 'student_id' ? 'hakbeon' : 'dongari';
         
         if (format === 'csv') {
             // CSV 형식 생성
@@ -1500,7 +1500,7 @@ app.get('/api/admin/export-results', authenticateToken, requireAdmin, async (req
             ].map(field => `"${field}"`).join(','));
             
             const csvContent = [
-                `# 오성중학교 동아리 배정 결과 (${sortLabel})`,
+                `# 오성중학교 동아리 배정 결과 (${sortBy === 'student_id' ? '학번순' : '동아리순'})`,
                 `# 생성일시: ${new Date().toLocaleString('ko-KR')}`,
                 `# 총 배정 학생 수: ${assignedStudents.length}명`,
                 '',
@@ -1508,8 +1508,11 @@ app.get('/api/admin/export-results', authenticateToken, requireAdmin, async (req
                 ...csvRows
             ].join('\n');
             
+            // 영문 파일명 사용 + UTF-8 인코딩 명시
+            const filename = `oseong_club_assignment_${sortLabel}_${timestamp}.csv`;
+            
             res.setHeader('Content-Type', 'text/csv; charset=utf-8');
-            res.setHeader('Content-Disposition', `attachment; filename="동아리배정결과_${sortLabel}_${timestamp}.csv"`);
+            res.setHeader('Content-Disposition', `attachment; filename="${filename}"; filename*=UTF-8''${encodeURIComponent('동아리배정결과_' + (sortBy === 'student_id' ? '학번순' : '동아리순') + '_' + timestamp + '.csv')}`);
             res.send('\ufeff' + csvContent); // UTF-8 BOM 추가
             
         } else if (format === 'txt') {
@@ -1518,7 +1521,7 @@ app.get('/api/admin/export-results', authenticateToken, requireAdmin, async (req
                 '='.repeat(80),
                 '오성중학교 2025학년도 창체동아리 배정 결과',
                 '='.repeat(80),
-                `정렬 기준: ${sortLabel}`,
+                `정렬 기준: ${sortBy === 'student_id' ? '학번순' : '동아리순'}`,
                 `생성 일시: ${new Date().toLocaleString('ko-KR')}`,
                 `총 배정 학생 수: ${assignedStudents.length}명`,
                 '',
@@ -1539,8 +1542,11 @@ app.get('/api/admin/export-results', authenticateToken, requireAdmin, async (req
                 '※ 문의사항이 있으시면 담당교사에게 연락바랍니다.'
             ].join('\n');
             
+            // 영문 파일명 사용 + UTF-8 인코딩 명시
+            const filename = `oseong_club_assignment_${sortLabel}_${timestamp}.txt`;
+            
             res.setHeader('Content-Type', 'text/plain; charset=utf-8');
-            res.setHeader('Content-Disposition', `attachment; filename="동아리배정결과_${sortLabel}_${timestamp}.txt"`);
+            res.setHeader('Content-Disposition', `attachment; filename="${filename}"; filename*=UTF-8''${encodeURIComponent('동아리배정결과_' + (sortBy === 'student_id' ? '학번순' : '동아리순') + '_' + timestamp + '.txt')}`);
             res.send(txtContent);
             
         } else {
@@ -1550,12 +1556,71 @@ app.get('/api/admin/export-results', authenticateToken, requireAdmin, async (req
             });
         }
         
-        console.log(`✅ 배정 결과 출력 완료: ${assignedStudents.length}명, ${format.toUpperCase()}, ${sortLabel}`);
+        console.log(`✅ 배정 결과 출력 완료: ${assignedStudents.length}명, ${format.toUpperCase()}, ${sortBy === 'student_id' ? '학번순' : '동아리순'}`);
         
     } catch (error) {
         console.error('❌ 배정 결과 출력 오류:', error);
         res.status(500).json({ 
             error: '배정 결과를 출력하는데 실패했습니다',
+            details: config.NODE_ENV === 'development' ? error.message : undefined
+        });
+    }
+});
+
+// 관리자: 배정 통계 요약 정보 (ROUND 함수 문제 수정)
+app.get('/api/admin/export-summary', authenticateToken, requireAdmin, async (req, res) => {
+    try {
+        // 배정 요약 통계
+        const summaryQueries = await Promise.all([
+            // 전체 통계
+            dbQuery(`
+                SELECT 
+                    COUNT(DISTINCT u.id) as total_students,
+                    COUNT(DISTINCT CASE WHEN a.status = 'assigned' THEN u.id END) as assigned_students,
+                    COUNT(DISTINCT CASE WHEN a.status = 'pending' OR a.status = 'rejected' THEN u.id END) as unassigned_students
+                FROM users u
+                LEFT JOIN applications a ON u.id = a.user_id AND u.role = 'student'
+                WHERE u.role = 'student'
+            `),
+            // 지망별 배정 현황
+            dbQuery(`
+                SELECT 
+                    priority,
+                    COUNT(*) as count
+                FROM applications 
+                WHERE status = 'assigned'
+                GROUP BY priority
+                ORDER BY priority
+            `),
+            // 동아리별 배정 현황 (ROUND 함수 대신 CAST 사용)
+            dbQuery(`
+                SELECT 
+                    c.name as club_name,
+                    c.teacher,
+                    c.max_capacity,
+                    COUNT(a.id) as assigned_count,
+                    CAST((COUNT(a.id)::float / NULLIF(c.max_capacity, 0)) * 100 AS DECIMAL(5,1)) as fill_rate
+                FROM clubs c
+                LEFT JOIN applications a ON c.id = a.club_id AND a.status = 'assigned'
+                GROUP BY c.id, c.name, c.teacher, c.max_capacity
+                ORDER BY assigned_count DESC
+            `)
+        ]);
+        
+        res.json({
+            success: true,
+            summary: {
+                total_stats: summaryQueries[0].rows[0],
+                priority_breakdown: summaryQueries[1].rows,
+                club_breakdown: summaryQueries[2].rows
+            },
+            generated_at: new Date().toISOString()
+        });
+        
+    } catch (error) {
+        console.error('❌ 배정 요약 정보 조회 오류:', error);
+        res.status(500).json({ 
+            error: '배정 요약 정보를 조회하는데 실패했습니다',
             details: config.NODE_ENV === 'development' ? error.message : undefined
         });
     }
