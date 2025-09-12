@@ -598,7 +598,7 @@
             assignClubs: () => api.request('/admin/assign-clubs', { method: 'POST' })
         };
 
-        // 배정 결과 출력 함수
+        // 배정 결과 출력 함수 (개선된 버전)
         async function exportResults(sortBy, format) {
             try {
                 console.log(`📊 배정 결과 출력 시작: ${sortBy}, ${format}`);
@@ -623,14 +623,32 @@
                     throw new Error(errorData.error || '배정 결과를 출력하는데 실패했습니다');
                 }
                 
-                // 파일 다운로드
+                // 파일 다운로드 (개선된 파일명 처리)
                 const blob = await response.blob();
-                const filename = response.headers.get('Content-Disposition').split('filename=')[1].replace(/"/g, '');
+                
+                // 기본 파일명 설정
+                let filename = `club_assignment_${sortBy}_${format}.${format}`;
+                
+                // Content-Disposition 헤더에서 파일명 추출
+                const disposition = response.headers.get('Content-Disposition');
+                if (disposition) {
+                    // UTF-8 인코딩된 파일명 우선 추출 (RFC 5987 형식)
+                    const utf8Match = disposition.match(/filename\*=UTF-8''([^;]+)/);
+                    if (utf8Match) {
+                        filename = decodeURIComponent(utf8Match[1]);
+                    } else {
+                        // 일반 파일명 추출 (fallback)
+                        const simpleMatch = disposition.match(/filename="([^"]+)"/);
+                        if (simpleMatch) {
+                            filename = simpleMatch[1];
+                        }
+                    }
+                }
                 
                 const downloadUrl = window.URL.createObjectURL(blob);
                 const a = document.createElement('a');
                 a.href = downloadUrl;
-                a.download = decodeURIComponent(filename);
+                a.download = filename;
                 document.body.appendChild(a);
                 a.click();
                 window.URL.revokeObjectURL(downloadUrl);
