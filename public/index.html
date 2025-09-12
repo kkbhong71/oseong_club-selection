@@ -466,7 +466,7 @@
         let currentStudentTab = 'clubs';
         let currentAdminTab = 'overview';
 
-        // API 유틸리티
+        // API 유틸리티 (수정된 버전)
         const api = {
             async request(endpoint, options = {}) {
                 try {
@@ -570,7 +570,7 @@
             }
         }
 
-        // ⭐ 폼 초기화 함수 (문제 1 해결)
+        // 폼 초기화 함수
         function clearAllForms() {
             document.getElementById('username').value = '';
             document.getElementById('password').value = '';
@@ -636,7 +636,7 @@
                 switchTab('login');
             }
             
-            clearAllForms(); // ⭐ 폼 초기화
+            clearAllForms();
         }
 
         // 로그인 처리
@@ -660,8 +660,6 @@
                 localStorage.setItem('user', JSON.stringify(result.user));
                 
                 currentUser = result.user;
-                
-                // ⭐ 로그인 후 폼 초기화 (문제 1 해결)
                 clearAllForms();
                 
                 if (currentUser.role === 'admin') {
@@ -694,11 +692,8 @@
             
             try {
                 await api.register(studentNumber, studentName);
-                
-                // ⭐ 가입 완료 후 메시지 표시하고 폼 초기화 (문제 1 해결)
                 showSuccess('가입이 완료되었습니다! 로그인 탭에서 로그인해주세요.', 'register');
                 
-                // 3초 후 로그인 탭으로 이동
                 setTimeout(() => {
                     switchTab('login');
                     clearAllForms();
@@ -711,7 +706,7 @@
             }
         }
 
-        // ⭐ 학생 화면 표시 (문제 2, 3 해결)
+        // 학생 화면 표시
         async function showStudentScreen() {
             document.getElementById('student-info').textContent = 
                 `${currentUser.name}님 (${currentUser.class_info || currentUser.student_id})`;
@@ -721,11 +716,116 @@
             await loadMyApplications();
         }
 
-        // ⭐ 관리자 화면 표시 (문제 2 해결)
+        // ⭐ 관리자 화면 표시 (수정된 버전)
         async function showAdminScreen() {
             document.getElementById('admin-info').textContent = `${currentUser.name}님`;
             showScreen('admin-main-screen');
+            
+            // 즉시 기본값 표시
+            document.getElementById('total-students').textContent = '로딩중...';
+            document.getElementById('total-clubs').textContent = '로딩중...';
+            document.getElementById('total-applications').textContent = '로딩중...';
+            document.getElementById('total-assigned').textContent = '로딩중...';
+            
             await loadAdminData();
+        }
+
+        // ⭐ 관리자 데이터 로드 함수 (완전히 새로 작성)
+        async function loadAdminData() {
+            console.log('📊 관리자 데이터 로딩 시작...');
+            
+            try {
+                // 1. 먼저 동아리 수 로드 (가장 안정적)
+                try {
+                    const clubsResult = await api.getClubs();
+                    if (clubsResult && clubsResult.clubs) {
+                        document.getElementById('total-clubs').textContent = clubsResult.clubs.length;
+                        console.log('✅ 동아리 수 로드 성공:', clubsResult.clubs.length);
+                    }
+                } catch (error) {
+                    console.warn('동아리 수 로드 실패:', error.message);
+                    document.getElementById('total-clubs').textContent = '오류';
+                }
+                
+                // 2. 관리자 통계 API 호출 (JWT 토큰 포함)
+                try {
+                    console.log('📊 통계 API 호출 시작...');
+                    const token = localStorage.getItem('token');
+                    
+                    if (!token) {
+                        throw new Error('인증 토큰이 없습니다');
+                    }
+                    
+                    const statsResponse = await fetch('/api/admin/stats', {
+                        method: 'GET',
+                        headers: {
+                            'Authorization': `Bearer ${token}`,
+                            'Content-Type': 'application/json'
+                        }
+                    });
+                    
+                    console.log('📊 통계 API 응답 상태:', statsResponse.status);
+                    
+                    if (!statsResponse.ok) {
+                        const errorData = await statsResponse.json().catch(() => ({}));
+                        throw new Error(errorData.error || `HTTP ${statsResponse.status}: ${statsResponse.statusText}`);
+                    }
+                    
+                    const statsData = await statsResponse.json();
+                    console.log('📊 통계 데이터 수신:', statsData);
+                    
+                    if (statsData.success && statsData.stats) {
+                        // 사용자 통계 처리
+                        const userStats = statsData.stats.users || [];
+                        const studentStats = userStats.find(u => u.role === 'student');
+                        const totalStudents = studentStats ? parseInt(studentStats.count) : 0;
+                        
+                        // 신청 통계 처리
+                        const applicationStats = statsData.stats.applications || [];
+                        const totalApplications = applicationStats.reduce((sum, app) => sum + parseInt(app.count || 0), 0);
+                        
+                        // 배정 통계 처리
+                        const assignmentSummary = statsData.stats.assignment_summary || {};
+                        const assignedStudents = assignmentSummary.assigned_students || 0;
+                        
+                        // DOM 업데이트
+                        document.getElementById('total-students').textContent = totalStudents;
+                        document.getElementById('total-applications').textContent = totalApplications;
+                        document.getElementById('total-assigned').textContent = assignedStudents;
+                        
+                        console.log('✅ 관리자 통계 업데이트 완료:', {
+                            students: totalStudents,
+                            applications: totalApplications, 
+                            assigned: assignedStudents
+                        });
+                        
+                    } else {
+                        throw new Error('통계 데이터 형식 오류');
+                    }
+                    
+                } catch (error) {
+                    console.error('❌ 통계 API 호출 실패:', error);
+                    
+                    // 기본값으로 설정
+                    document.getElementById('total-students').textContent = '확인 불가';
+                    document.getElementById('total-applications').textContent = '확인 불가';  
+                    document.getElementById('total-assigned').textContent = '확인 불가';
+                    
+                    // 사용자에게 알림 (선택적)
+                    if (error.message.includes('토큰') || error.message.includes('TOKEN')) {
+                        console.warn('토큰 문제로 인한 통계 로딩 실패');
+                    }
+                }
+                
+            } catch (error) {
+                console.error('❌ 관리자 데이터 로드 전체 실패:', error);
+                
+                // 모든 항목을 오류 상태로 설정
+                ['total-students', 'total-clubs', 'total-applications', 'total-assigned'].forEach(id => {
+                    const element = document.getElementById(id);
+                    if (element) element.textContent = '오류';
+                });
+            }
         }
 
         // 동아리 목록 로드
@@ -961,19 +1061,6 @@
             document.getElementById('my-applications-content').classList.toggle('hidden', tab !== 'my-applications');
         }
 
-        // 관리자 데이터 로드
-        async function loadAdminData() {
-            try {
-                // 여기에 관리자 데이터 로드 로직 구현
-                document.getElementById('total-students').textContent = '로딩중...';
-                document.getElementById('total-clubs').textContent = allClubs.length || '로딩중...';
-                document.getElementById('total-applications').textContent = '로딩중...';
-                document.getElementById('total-assigned').textContent = '로딩중...';
-            } catch (error) {
-                console.error('관리자 데이터 로드 실패:', error);
-            }
-        }
-
         // 관리자 탭 전환
         function switchAdminTab(tab) {
             currentAdminTab = tab;
@@ -996,6 +1083,101 @@
                     content.classList.toggle('hidden', t !== tab);
                 }
             });
+
+            // 신청 관리 탭을 처음 열 때 데이터 로드
+            if (tab === 'applications') {
+                loadAdminApplications();
+            }
+        }
+
+        // 관리자 신청 현황 로드
+        async function loadAdminApplications() {
+            try {
+                const result = await api.getAdminApplications();
+                renderAdminApplications(result.applications || []);
+            } catch (error) {
+                console.error('관리자 신청현황 로드 실패:', error);
+                const adminApplicationsList = document.getElementById('admin-applications-list');
+                if (adminApplicationsList) {
+                    adminApplicationsList.innerHTML = `
+                        <div class="text-center py-8">
+                            <p class="text-gray-500">신청현황을 불러오는데 실패했습니다.</p>
+                            <button onclick="loadAdminApplications()" class="mt-2 text-blue-600 hover:text-blue-700">
+                                다시 시도
+                            </button>
+                        </div>
+                    `;
+                }
+            }
+        }
+
+        // 관리자 신청현황 렌더링
+        function renderAdminApplications(applications) {
+            const adminApplicationsList = document.getElementById('admin-applications-list');
+            if (!adminApplicationsList) return;
+            
+            if (applications.length === 0) {
+                adminApplicationsList.innerHTML = `
+                    <div class="text-center py-8">
+                        <p class="text-gray-500">아직 신청된 내용이 없습니다.</p>
+                    </div>
+                `;
+                return;
+            }
+            
+            adminApplicationsList.innerHTML = `
+                <div class="overflow-hidden shadow ring-1 ring-black ring-opacity-5 md:rounded-lg">
+                    <table class="min-w-full divide-y divide-gray-300">
+                        <thead class="bg-gray-50">
+                            <tr>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">학생명</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">학번</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">반</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">지망</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">동아리명</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">상태</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">신청일</th>
+                            </tr>
+                        </thead>
+                        <tbody class="bg-white divide-y divide-gray-200">
+                            ${applications.map(app => `
+                                <tr>
+                                    <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
+                                        ${app.student_name}
+                                    </td>
+                                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                                        ${app.student_id}
+                                    </td>
+                                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                                        ${app.class_info || '-'}
+                                    </td>
+                                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                                        ${app.preference}지망
+                                    </td>
+                                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                                        ${app.club_name}
+                                    </td>
+                                    <td class="px-6 py-4 whitespace-nowrap">
+                                        <span class="inline-flex px-2 py-1 text-xs font-semibold rounded-full 
+                                            ${app.status === 'assigned' ? 'bg-green-100 text-green-800' : 
+                                              app.status === 'rejected' ? 'bg-red-100 text-red-800' : 
+                                              'bg-yellow-100 text-yellow-800'}">
+                                            ${app.status === 'assigned' ? '배정완료' : 
+                                              app.status === 'rejected' ? '배정탈락' : '대기중'}
+                                        </span>
+                                    </td>
+                                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                                        ${new Date(app.applied_at).toLocaleDateString('ko-KR')}
+                                    </td>
+                                </tr>
+                            `).join('')}
+                        </tbody>
+                    </table>
+                </div>
+                <div class="mt-4 text-sm text-gray-500">
+                    총 ${applications.length}건의 신청
+                </div>
+            `;
         }
 
         // 동아리 배정 실행
@@ -1004,7 +1186,10 @@
                 try {
                     const result = await api.assignClubs();
                     alert(`배정 완료: ${result.summary.total_assigned}명 배정됨`);
-                    await loadAdminData();
+                    await loadAdminData(); // 통계 새로고침
+                    if (currentAdminTab === 'applications') {
+                        await loadAdminApplications(); // 신청 현황 새로고침
+                    }
                 } catch (error) {
                     alert('배정 실패: ' + error.message);
                 }
@@ -1024,7 +1209,7 @@
                 third_choice: null
             };
             
-            clearAllForms(); // ⭐ 로그아웃 시에도 폼 초기화
+            clearAllForms();
             showScreen('login-screen');
         }
 
@@ -1140,7 +1325,7 @@
             console.error('처리되지 않은 Promise 거부:', event.reason);
         });
 
-        console.log('오성중학교 동아리 시스템 v1.0.4 - 완전 기능 구현 버전');
+        console.log('오성중학교 동아리 시스템 v1.0.4 - 관리자 대시보드 수정 완료');
     </script>
 </body>
 </html>
