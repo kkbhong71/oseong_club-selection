@@ -1420,6 +1420,206 @@ app.get('/api/admin/stats', authenticateToken, requireAdmin, async (req, res) =>
     }
 });
 
+// ============= 🆕 새로운 API: 배정 결과 출력 기능 =============
+
+// 관리자: 배정 결과 출력 (CSV/TXT 다운로드)
+app.get('/api/admin/export-results', authenticateToken, requireAdmin, async (req, res) => {
+    try {
+        const { sortBy = 'student_id', format = 'csv' } = req.query;
+        
+        console.log(`📊 배정 결과 출력 요청: ${req.user.username}, 정렬: ${sortBy}, 형식: ${format}`);
+        
+        // 배정된 학생들의 정보 조회
+        const result = await dbQuery(`
+            SELECT 
+                u.username as student_id,
+                u.name as student_name,
+                u.class_info,
+                c.name as club_name,
+                c.teacher as club_teacher,
+                c.category as club_category,
+                c.location as club_location,
+                c.meeting_time,
+                a.priority as assigned_priority,
+                a.assigned_at,
+                CASE 
+                    WHEN u.username ~ '^[1-3][0-9][0-9][0-9]$' THEN 
+                        CONCAT(SUBSTRING(u.username, 1, 1), '학년 ', SUBSTRING(u.username, 2, 1), '반 ', SUBSTRING(u.username, 3, 2), '번')
+                    ELSE u.class_info
+                END as formatted_class
+            FROM applications a
+            JOIN users u ON a.user_id = u.id
+            JOIN clubs c ON a.club_id = c.id
+            WHERE a.status = 'assigned'
+            ORDER BY 
+                CASE 
+                    WHEN $1 = 'student_id' THEN u.username
+                    WHEN $1 = 'club' THEN c.name || u.username
+                    ELSE u.username
+                END
+        `, [sortBy]);
+        
+        const assignedStudents = result.rows;
+        
+        if (assignedStudents.length === 0) {
+            return res.status(404).json({
+                error: '배정된 학생이 없습니다',
+                message: '동아리 배정을 먼저 실행해주세요'
+            });
+        }
+        
+        const timestamp = new Date().toISOString().slice(0, 19).replace(/[:-]/g, '');
+        const sortLabel = sortBy === 'student_id' ? '학번순' : '동아리순';
+        
+        if (format === 'csv') {
+            // CSV 형식 생성
+            const csvHeader = [
+                '학번',
+                '이름', 
+                '학급',
+                '배정동아리',
+                '지도교사',
+                '동아리분류',
+                '활동장소',
+                '활동시간',
+                '배정지망',
+                '배정일시'
+            ].join(',');
+            
+            const csvRows = assignedStudents.map(student => [
+                student.student_id,
+                student.student_name,
+                student.formatted_class || student.class_info || '',
+                student.club_name,
+                student.club_teacher,
+                student.club_category,
+                student.club_location || '미정',
+                student.meeting_time || '미정',
+                `${student.assigned_priority}지망`,
+                new Date(student.assigned_at).toLocaleDateString('ko-KR')
+            ].map(field => `"${field}"`).join(','));
+            
+            const csvContent = [
+                `# 오성중학교 동아리 배정 결과 (${sortLabel})`,
+                `# 생성일시: ${new Date().toLocaleString('ko-KR')}`,
+                `# 총 배정 학생 수: ${assignedStudents.length}명`,
+                '',
+                csvHeader,
+                ...csvRows
+            ].join('\n');
+            
+            res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+            res.setHeader('Content-Disposition', `attachment; filename="동아리배정결과_${sortLabel}_${timestamp}.csv"`);
+            res.send('\ufeff' + csvContent); // UTF-8 BOM 추가
+            
+        } else if (format === 'txt') {
+            // TXT 형식 생성
+            const txtContent = [
+                '='.repeat(80),
+                '오성중학교 2025학년도 창체동아리 배정 결과',
+                '='.repeat(80),
+                `정렬 기준: ${sortLabel}`,
+                `생성 일시: ${new Date().toLocaleString('ko-KR')}`,
+                `총 배정 학생 수: ${assignedStudents.length}명`,
+                '',
+                ...assignedStudents.map((student, index) => [
+                    `${index + 1}. ${student.student_name} (${student.student_id})`,
+                    `   학급: ${student.formatted_class || student.class_info || '미정'}`,
+                    `   배정동아리: ${student.club_name}`,
+                    `   지도교사: ${student.club_teacher}`,
+                    `   동아리분류: ${student.club_category}`,
+                    `   활동장소: ${student.club_location || '미정'}`,
+                    `   활동시간: ${student.meeting_time || '미정'}`,
+                    `   배정지망: ${student.assigned_priority}지망`,
+                    `   배정일시: ${new Date(student.assigned_at).toLocaleString('ko-KR')}`,
+                    ''
+                ].join('\n')),
+                '='.repeat(80),
+                `※ 본 자료는 ${new Date().toLocaleString('ko-KR')}에 생성되었습니다.`,
+                '※ 문의사항이 있으시면 담당교사에게 연락바랍니다.'
+            ].join('\n');
+            
+            res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+            res.setHeader('Content-Disposition', `attachment; filename="동아리배정결과_${sortLabel}_${timestamp}.txt"`);
+            res.send(txtContent);
+            
+        } else {
+            return res.status(400).json({
+                error: '지원하지 않는 파일 형식입니다',
+                supported_formats: ['csv', 'txt']
+            });
+        }
+        
+        console.log(`✅ 배정 결과 출력 완료: ${assignedStudents.length}명, ${format.toUpperCase()}, ${sortLabel}`);
+        
+    } catch (error) {
+        console.error('❌ 배정 결과 출력 오류:', error);
+        res.status(500).json({ 
+            error: '배정 결과를 출력하는데 실패했습니다',
+            details: config.NODE_ENV === 'development' ? error.message : undefined
+        });
+    }
+});
+
+// 관리자: 배정 통계 요약 정보
+app.get('/api/admin/export-summary', authenticateToken, requireAdmin, async (req, res) => {
+    try {
+        // 배정 요약 통계
+        const summaryQueries = await Promise.all([
+            // 전체 통계
+            dbQuery(`
+                SELECT 
+                    COUNT(DISTINCT u.id) as total_students,
+                    COUNT(DISTINCT CASE WHEN a.status = 'assigned' THEN u.id END) as assigned_students,
+                    COUNT(DISTINCT CASE WHEN a.status = 'pending' OR a.status = 'rejected' THEN u.id END) as unassigned_students
+                FROM users u
+                LEFT JOIN applications a ON u.id = a.user_id AND u.role = 'student'
+                WHERE u.role = 'student'
+            `),
+            // 지망별 배정 현황
+            dbQuery(`
+                SELECT 
+                    priority,
+                    COUNT(*) as count
+                FROM applications 
+                WHERE status = 'assigned'
+                GROUP BY priority
+                ORDER BY priority
+            `),
+            // 동아리별 배정 현황
+            dbQuery(`
+                SELECT 
+                    c.name as club_name,
+                    c.teacher,
+                    c.max_capacity,
+                    COUNT(a.id) as assigned_count,
+                    ROUND((COUNT(a.id)::float / c.max_capacity) * 100, 1) as fill_rate
+                FROM clubs c
+                LEFT JOIN applications a ON c.id = a.club_id AND a.status = 'assigned'
+                GROUP BY c.id, c.name, c.teacher, c.max_capacity
+                ORDER BY assigned_count DESC
+            `)
+        ]);
+        
+        res.json({
+            success: true,
+            summary: {
+                total_stats: summaryQueries[0].rows[0],
+                priority_breakdown: summaryQueries[1].rows,
+                club_breakdown: summaryQueries[2].rows
+            },
+            generated_at: new Date().toISOString()
+        });
+        
+    } catch (error) {
+        console.error('❌ 배정 요약 정보 조회 오류:', error);
+        res.status(500).json({ 
+            error: '배정 요약 정보를 조회하는데 실패했습니다',
+            details: config.NODE_ENV === 'development' ? error.message : undefined
+        });
+    }
+});
+
 // ========================================
 // 에러 핸들링 및 정적 파일 제공
 // ========================================
@@ -1433,7 +1633,8 @@ app.use('/api/*', (req, res) => {
             '/api/health', '/api/info',
             '/api/login', '/api/register', '/api/clubs',
             '/api/apply', '/api/my-applications',
-            '/api/admin/applications', '/api/admin/assign-clubs', '/api/admin/stats'
+            '/api/admin/applications', '/api/admin/assign-clubs', '/api/admin/stats',
+            '/api/admin/export-results', '/api/admin/export-summary'
         ]
     });
 });
