@@ -1315,10 +1315,9 @@ app.get('/api/admin/stats', authenticateToken, requireAdmin, async (req, res) =>
                     COUNT(CASE WHEN a.status = 'assigned' THEN 1 END) as assigned_count,
                     COUNT(CASE WHEN a.status = 'pending' THEN 1 END) as pending_count,
                     COALESCE(
-                        ROUND(
+                        CAST(
                             (COUNT(CASE WHEN a.status = 'assigned' THEN 1 END)::float / 
-                             NULLIF(c.max_capacity, 0)) * 100, 
-                            2
+                             NULLIF(c.max_capacity, 0)) * 100 AS DECIMAL(5,1)
                         ), 
                         0
                     ) as fill_rate
